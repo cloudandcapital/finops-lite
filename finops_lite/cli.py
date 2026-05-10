@@ -1280,6 +1280,118 @@ def export_focus(ctx, days):
                 performance_tracker.show_summary(verbose=config.output.verbose)
 
 
+@export.command("focus2026")
+@click.option(
+    "--days", "-d", default=30, type=int,
+    help="Number of days to include in the export (default: 30)",
+    callback=lambda ctx, param, value: validate_days(value) if value else 30,
+)
+@click.option(
+    "--output", "-o", "output_file", default=None, type=click.Path(),
+    help="Output file path (default: stdout)",
+)
+@click.pass_context
+def export_focus2026(ctx, days, output_file):
+    """Export AWS cost data as FOCUS 2026 CSV — the latest FinOps Foundation spec."""
+    config = ctx.obj.config
+    logger = ctx.obj.logger
+    dry_run = ctx.obj.dry_run
+    cache_manager = ctx.obj.cache_manager
+    performance_tracker = ctx.obj.performance_tracker
+
+    _configure_output_mode(cache_manager, True)
+
+    if performance_tracker:
+        performance_tracker.start_operation("export_focus2026")
+
+    try:
+        if dry_run:
+            console.print(
+                "[yellow]Dry-run mode: FOCUS 2026 export requires real AWS data.[/yellow]"
+            )
+            return
+
+        _ = _test_aws_connectivity(config, logger, cache_manager, show_status=False)
+
+        from .core.cost_explorer import CostExplorerService
+        from .focus_2026 import Focus2026Record, export_focus_2026, from_focus_1_record
+
+        svc = CostExplorerService(config)
+        focus1_records = svc.get_focus_lite_records(days=days)
+
+        focus2026_records = [
+            from_focus_1_record(
+                provider=r.provider,
+                service=r.service,
+                cost=r.cost,
+                currency=r.currency,
+                period_start=r.time_window_start,
+                period_end=r.time_window_end,
+                billing_account_id=config.account_id or "unknown",
+                usage_amount=r.usage_amount,
+                usage_unit=r.usage_unit,
+            )
+            for r in focus1_records
+        ]
+
+        if output_file:
+            with open(output_file, "w", newline="", encoding="utf-8") as f:
+                n = export_focus_2026(focus2026_records, f)
+            console.print(f"[green]FOCUS 2026 export: {n} rows → {output_file}[/green]")
+        else:
+            export_focus_2026(focus2026_records, sys.stdout)
+
+    except (
+        CostExplorerNotEnabledError, CostExplorerWarmingUpError,
+        AWSCredentialsError, AWSPermissionError,
+        APIRateLimitError, NetworkTimeoutError, ValidationError,
+    ) as e:
+        if performance_tracker:
+            performance_tracker.record_error()
+        handle_error(e, config.output.verbose)
+        sys.exit(1)
+    except Exception as e:
+        if performance_tracker:
+            performance_tracker.record_error()
+        handle_error(e, config.output.verbose)
+        sys.exit(1)
+    finally:
+        if performance_tracker:
+            performance_tracker.finish_current_operation()
+
+
+@cli.group()
+@click.pass_context
+def validate(ctx):
+    """Validate billing data against FinOps specifications."""
+    pass
+
+
+@validate.command("focus")
+@click.argument("csv_file", type=click.Path(exists=True))
+@click.option("--verbose", "-v", is_flag=True, help="Show all issues (not just first 10)")
+@click.option(
+    "--spec", default="2026",
+    type=click.Choice(["2026", "1.0"]),
+    help="FOCUS spec version to validate against (default: 2026)",
+)
+@click.pass_context
+def validate_focus(ctx, csv_file, verbose, spec):
+    """Validate a billing CSV against the FOCUS specification."""
+    from .focus_2026 import validate_focus_2026_csv, print_validation_report
+
+    console.print(f"[cyan]Validating {csv_file} against FOCUS {spec}...[/cyan]")
+
+    if spec == "1.0":
+        console.print("[yellow]FOCUS 1.0 validation uses the FOCUS 2026 required-column subset.[/yellow]")
+
+    result = validate_focus_2026_csv(csv_file)
+    print_validation_report(result, verbose=verbose)
+
+    if not result.compliant:
+        sys.exit(1)
+
+
 @cli.group()
 def cache():
     """💾 Cache management commands."""

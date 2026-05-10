@@ -1,48 +1,44 @@
 # FinOps Lite
 
-FinOps Lite is a command-line tool that reads AWS Cost Explorer data and turns it into clear cost summaries, period comparisons, exports, and lightweight decision signals.
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Multi-cloud](https://img.shields.io/badge/cloud-AWS%20%7C%20Azure%20%7C%20GCP-orange)](https://github.com/cloudandcapital/finops-lite)
+[![FOCUS 2026](https://img.shields.io/badge/FOCUS-2026-brightgreen)](https://focus.finops.org)
 
-## What FinOps Lite Does
+**Multi-cloud cost CLI — AWS/Azure/GCP spend analysis with FOCUS 2026 export and validator.**
 
-- Shows AWS spend over a time window
-- Compares one period against another
-- Exports normalized CSV for downstream analysis
-- Produces simple, repeatable outputs for automation and reviews
+Part of the [Cloud & Capital](https://github.com/cloudandcapital) FinOps pipeline.  
+Feeds cost data into [Cloud Cost Guard](https://github.com/cloudandcapital/cloud-cost-guard) — the unified FinOps dashboard.
 
-## Requirements
+---
 
-- Python 3.9+ (project classifiers cover 3.9-3.12)
-- AWS account with Cost Explorer enabled
-- IAM access that includes `ce:GetCostAndUsage` and `sts:GetCallerIdentity`
+**Features:**
+- Pull AWS, Azure, or GCP cost data via native billing APIs
+- Period comparisons (month-over-month, week-over-week)
+- FOCUS 2026 CSV export — the latest FinOps Foundation open cost spec
+- FOCUS 2026 validator — flag non-compliant fields in any billing export
+- Anomaly signals with configurable thresholds
+- JSON, CSV, YAML, and executive Markdown output
+
+---
 
 ## Install
 
-### Option A: Install with `pipx` (recommended for CLI tools)
-
 ```bash
-pipx install "git+https://github.com/dianuhs/finops-lite.git"
-# or from a local clone:
-pipx install .
-```
+# pipx (recommended for CLI tools)
+pipx install "git+https://github.com/cloudandcapital/finops-lite.git"
 
-### Option B: Install with `pip` in a virtual environment
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install --upgrade pip
+# or pip in a venv
+python3 -m venv .venv && source .venv/bin/activate
 pip install .
 ```
-
-After install, the CLI entry points are `finops` and `finops-lite`:
 
 ```bash
 finops --help
 ```
 
-## AWS Credentials Setup
+---
 
-Create and use a named AWS profile:
+## AWS Setup
 
 ```bash
 aws configure --profile finops-prod
@@ -50,120 +46,82 @@ export AWS_PROFILE=finops-prod
 export AWS_DEFAULT_REGION=us-east-1
 ```
 
-Then run commands either with environment variables:
+IAM required: `ce:GetCostAndUsage`, `sts:GetCallerIdentity`.
+
+---
+
+## Key Commands
 
 ```bash
+# Cost overview — last 30 days
 finops cost overview --days 30
+
+# Monthly calendar report
+finops cost monthly 2026-04
+
+# Compare two months
+finops cost compare 2026-04 2026-03
+
+# Export FOCUS 2026 CSV (latest spec)
+finops export focus2026 --days 30 --output focus-2026.csv
+
+# Export FOCUS 1.0 CSV (legacy)
+finops export focus --days 30 > focus-1.0.csv
+
+# Validate any billing CSV against FOCUS 2026
+finops validate focus my-billing-export.csv
+
+# Anomaly signals
+finops signals detect --threshold 0.15
 ```
 
-Or with explicit flags:
+---
 
-```bash
-finops --profile finops-prod --region us-east-1 cost overview --days 30
-```
+## FOCUS 2026 Support
 
-## Quickstart
+FinOps Lite exports billing data in the **FOCUS 2026** format — the FinOps Foundation's latest open cost specification. Key additions over FOCUS 1.0:
 
-### 1) Cost analysis (overview/monthly/compare style)
+| Column | What it adds |
+|--------|-------------|
+| `ChargeClass` | `Standard` or `Correction` — marks retroactive billing adjustments |
+| `EffectiveCost` | Actual cost after commitment discounts (RI / Savings Plans / CUDs) |
+| `ListCost` | On-demand list price before discounts |
+| `ContractedCost` | Negotiated rate cost |
+| `CommitmentDiscountType/Status` | Reserved, Savings-Plan, or Committed-Use tracking |
+| `ServiceCategory` | Standardized taxonomy: Compute, Storage, Databases, Networking… |
+| `RegionId / RegionName` | Normalized region identifiers |
+| `ConsumedUnit / ConsumedQuantity` | Actual usage vs pricing unit |
+| `x_focus_schema_version` | `2026.0` — marks file as FOCUS 2026 compliant |
 
-```bash
-finops --profile finops-prod --region us-east-1 cost compare --current 2026-01 --baseline 2025-12
-```
+The built-in validator (`finops validate focus`) checks all required columns, enum values, date ordering, currency codes, and schema version — and exits non-zero if the file is non-compliant (pipe-friendly for CI).
 
-### 2) Export FOCUS-lite CSV
-
-```bash
-finops --profile finops-prod --region us-east-1 export focus --days 30 > focus-lite.csv
-```
-
-### 3) Flow exported CSV into `signals from-services`
-
-`signals from-services` expects a service-rollup CSV shape. The sequence below converts `focus-lite.csv` into that shape, then runs signals:
-
-```bash
-python3 - <<'PY'
-import csv
-from collections import defaultdict
-
-source = "focus-lite.csv"
-target = "services-rollup.csv"
-
-totals = defaultdict(float)
-days_seen = defaultdict(set)
-
-with open(source, "r", encoding="utf-8", newline="") as f:
-    for row in csv.DictReader(f):
-        service = (row.get("service") or "Unknown").strip()
-        cost = float(row.get("cost") or 0.0)
-        totals[service] += cost
-        days_seen[service].add(row.get("time_window_start"))
-
-grand_total = sum(totals.values()) or 1.0
-
-with open(target, "w", encoding="utf-8", newline="") as f:
-    writer = csv.DictWriter(
-        f,
-        fieldnames=[
-            "service_name",
-            "total_cost",
-            "percentage_of_total",
-            "daily_average",
-            "trend_direction",
-            "trend_percentage",
-            "trend_amount",
-        ],
-    )
-    writer.writeheader()
-
-    for service, total in sorted(totals.items(), key=lambda kv: kv[1], reverse=True):
-        day_count = max(len(days_seen[service]), 1)
-        writer.writerow(
-            {
-                "service_name": service,
-                "total_cost": f"{total:.2f}",
-                "percentage_of_total": f"{(total / grand_total) * 100:.2f}",
-                "daily_average": f"{total / day_count:.2f}",
-                # Quickstart defaults until multi-period trend input is provided:
-                "trend_direction": "stable",
-                "trend_percentage": "0.0",
-                "trend_amount": "0.0",
-            }
-        )
-
-print(f"Wrote {target}")
-PY
-
-finops signals from-services --file services-rollup.csv --period "Last 30 days" --format table
-```
-
-## Current Limitation: `--group-by`
-
-`finops cost overview --group-by` is intentionally SERVICE-only in v1.1.
-
-Default behavior is `SERVICE`. `--group-by SERVICE` is accepted explicitly. Any other value fails fast with a clear error so behavior stays predictable.
-
-## Selected Commands
-
-- `finops cost overview --days 30`
-- `finops cost monthly --month 2026-01`
-- `finops cost compare --current 2026-01 --baseline 2025-12`
-- `finops export focus --days 30 > focus-lite.csv`
-- `finops signals from-services --file services-rollup.csv --format table`
-- `finops cache stats`
+---
 
 ## Output Formats
 
-Cost commands support table, JSON, CSV, YAML, and executive text output:
-
 ```bash
-finops cost overview --days 30 --format json
-finops cost monthly --month 2026-01 --format executive
+finops cost overview --output-format json    # machine-readable JSON
+finops cost overview --output-format csv     # spreadsheet-ready CSV
+finops cost overview --output-format yaml    # YAML
+finops cost overview --output-format executive  # executive Markdown summary
 ```
 
-## SQL Analysis
+---
 
-For a portfolio-facing SQL view of the same cost domain, see [`sql-analysis/`](sql-analysis/). It includes a compact cloud cost dataset, a portable schema, and analyst-style queries for service mix, spend trends, anomaly review, and period-over-period comparison.
+## Part of the Cloud & Capital Pipeline
+
+| Tool | Role |
+|------|------|
+| **FinOps Lite** | Cost pull + FOCUS 2026 export |
+| [Cloud Cost Guard](https://github.com/cloudandcapital/cloud-cost-guard) | Unified dashboard (consumes FinOps Lite output) |
+| [FinOps Watchdog](https://github.com/cloudandcapital/finops-watchdog) | Anomaly detection from cost CSVs |
+| [Recovery Economics](https://github.com/cloudandcapital/recovery-economics) | Resilience cost modeling |
+| [AI Cost Lens](https://github.com/cloudandcapital/ai-cost-lens) | AI/LLM spend tracking |
+| [SaaS Cost Analyzer](https://github.com/cloudandcapital/saas-cost-analyzer) | SaaS license governance |
+| [Tech Spend Command Center](https://github.com/cloudandcapital/tech-spend-command-center) | Executive reporting |
+
+---
 
 ## License
 
-MIT
+MIT © 2025 Diana Molski, Cloud & Capital
