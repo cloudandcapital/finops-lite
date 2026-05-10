@@ -1,0 +1,9 @@
+Date,ServiceName,ResourceId,CostInBillingCurrency,BillingCurrency,SubscriptionId,ResourceGroup,ChargeType,Quantity,UnitOfMeasure
+2026-03-01,Virtual Machines,/subscriptions/a1b2c3d4/resourceGroups/prod/providers/Microsoft.Compute/virtualMachines/api-server-01,98.40,USD,a1b2c3d4-e5f6-7890-abcd-ef1234567890,prod,Usage,744,1 Hour
+2026-03-01,Storage,/subscriptions/a1b2c3d4/resourceGroups/prod/providers/Microsoft.Storage/storageAccounts/prodstore,12.30,USD,a1b2c3d4-e5f6-7890-abcd-ef1234567890,prod,Usage,450000,1 GB/Month
+2026-03-01,Azure SQL Database,/subscriptions/a1b2c3d4/resourceGroups/prod/providers/Microsoft.Sql/servers/prod-sql,34.80,USD,a1b2c3d4-e5f6-7890-abcd-ef1234567890,prod,Usage,744,1 Hour
+2026-03-01,Azure Kubernetes Service,/subscriptions/a1b2c3d4/resourceGroups/prod/providers/Microsoft.ContainerService/managedClusters/prod-aks,67.20,USD,a1b2c3d4-e5f6-7890-abcd-ef1234567890,prod,Usage,744,1 Hour
+2026-03-02,Virtual Machines,/subscriptions/a1b2c3d4/resourceGroups/prod/providers/Microsoft.Compute/virtualMachines/api-server-01,98.40,USD,a1b2c3d4-e5f6-7890-abcd-ef1234567890,prod,Usage,744,1 Hour
+2026-03-02,Storage,/subscriptions/a1b2c3d4/resourceGroups/prod/providers/Microsoft.Storage/storageAccounts/prodstore,11.90,USD,a1b2c3d4-e5f6-7890-abcd-ef1234567890,prod,Usage,435000,1 GB/Month
+2026-03-02,Azure SQL Database,/subscriptions/a1b2c3d4/resourceGroups/prod/providers/Microsoft.Sql/servers/prod-sql,34.80,USD,a1b2c3d4-e5f6-7890-abcd-ef1234567890,prod,Usage,744,1 Hour
+2026-03-02,Azure Kubernetes Service,/subscriptions/a1b2c3d4/resourceGroups/prod/providers/Microsoft.ContainerService/managedClusters/prod-aks,67.20,USD,a1b2c3d4-e5f6-7890-abcd-ef1234567890,prod,Usage,744,1 Hour

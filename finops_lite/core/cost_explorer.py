@@ -266,25 +266,20 @@ class CostExplorerService:
         return records
 
     def export_focus_lite(self, days: int = 30, file: TextIO = sys.stdout) -> None:
-        """
-        Export FOCUS-lite style records as CSV.
-
-        This is CLI-friendly and plays well with spreadsheets, notebooks,
-        and other tools that want a simple, normalized table.
-        """
+        """Export FOCUS 1.0 compliant CSV to file (stdout by default)."""
         records = self.get_focus_lite_records(days=days)
 
         fieldnames = [
+            "BilledCost",
+            "ResourceId",
+            "ServiceName",
+            "ChargePeriodStart",
+            "ChargePeriodEnd",
+            "ChargeType",
             "provider",
-            "service",
-            "resource_id",
-            "environment",
-            "cost",
             "currency",
             "usage_amount",
             "usage_unit",
-            "time_window_start",
-            "time_window_end",
             "allocation_method",
             "allocation_confidence",
         ]
@@ -295,18 +290,18 @@ class CostExplorerService:
         for r in records:
             writer.writerow(
                 {
+                    "BilledCost": f"{r.cost:.4f}",
+                    "ResourceId": r.resource_id or "",
+                    "ServiceName": r.service,
+                    "ChargePeriodStart": r.time_window_start.isoformat(),
+                    "ChargePeriodEnd": r.time_window_end.isoformat(),
+                    "ChargeType": "Usage",
                     "provider": r.provider,
-                    "service": r.service,
-                    "resource_id": r.resource_id or "",
-                    "environment": r.environment,
-                    "cost": f"{r.cost:.4f}",
                     "currency": r.currency,
                     "usage_amount": (
                         "" if r.usage_amount is None else f"{r.usage_amount:.4f}"
                     ),
                     "usage_unit": r.usage_unit or "",
-                    "time_window_start": r.time_window_start.isoformat(),
-                    "time_window_end": r.time_window_end.isoformat(),
                     "allocation_method": r.allocation_method,
                     "allocation_confidence": r.allocation_confidence,
                 }

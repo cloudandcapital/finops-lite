@@ -1,0 +1,16 @@
+BilledCost,ResourceId,ServiceName,ChargePeriodStart,ChargePeriodEnd,ChargeType,provider,currency,usage_amount,usage_unit,allocation_method,allocation_confidence
+142.3800,,"Amazon EC2",2026-03-01,2026-03-02,Usage,aws,USD,1440.0000,Hrs,direct,medium
+28.4100,,"Amazon S3",2026-03-01,2026-03-02,Usage,aws,USD,892340.0000,GB-Month,direct,medium
+4.1200,,"Amazon RDS",2026-03-01,2026-03-02,Usage,aws,USD,24.0000,Hrs,direct,medium
+1.8900,,"AWS Lambda",2026-03-01,2026-03-02,Usage,aws,USD,4200000.0000,Invocations,direct,medium
+0.9300,,"Amazon CloudFront",2026-03-01,2026-03-02,Usage,aws,USD,18400.0000,GB,direct,medium
+138.1500,,"Amazon EC2",2026-03-02,2026-03-03,Usage,aws,USD,1440.0000,Hrs,direct,medium
+29.7600,,"Amazon S3",2026-03-02,2026-03-03,Usage,aws,USD,910000.0000,GB-Month,direct,medium
+4.0800,,"Amazon RDS",2026-03-02,2026-03-03,Usage,aws,USD,24.0000,Hrs,direct,medium
+2.1100,,"AWS Lambda",2026-03-02,2026-03-03,Usage,aws,USD,4900000.0000,Invocations,direct,medium
+1.0200,,"Amazon CloudFront",2026-03-02,2026-03-03,Usage,aws,USD,19800.0000,GB,direct,medium
+145.6700,,"Amazon EC2",2026-03-03,2026-03-04,Usage,aws,USD,1440.0000,Hrs,direct,medium
+27.9900,,"Amazon S3",2026-03-03,2026-03-04,Usage,aws,USD,878000.0000,GB-Month,direct,medium
+4.2300,,"Amazon RDS",2026-03-03,2026-03-04,Usage,aws,USD,24.0000,Hrs,direct,medium
+1.9700,,"AWS Lambda",2026-03-03,2026-03-04,Usage,aws,USD,4500000.0000,Invocations,direct,medium
+0.8800,,"Amazon CloudFront",2026-03-03,2026-03-04,Usage,aws,USD,17200.0000,GB,direct,medium

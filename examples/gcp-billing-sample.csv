@@ -1,0 +1,9 @@
+usage_start_time,usage_end_time,service.description,sku.description,project.id,resource.name,cost,currency,usage.amount,usage.unit
+2026-03-01T00:00:00Z,2026-03-02T00:00:00Z,Compute Engine,N2 Instance Core running in Americas,my-prod-project,projects/my-prod-project/zones/us-central1-a/instances/api-vm-001,112.50,USD,720,hour
+2026-03-01T00:00:00Z,2026-03-02T00:00:00Z,Cloud Storage,Standard Storage US,my-prod-project,,8.40,USD,280000,gibibyte month
+2026-03-01T00:00:00Z,2026-03-02T00:00:00Z,Cloud SQL,Cloud SQL for PostgreSQL: Zonal - 2 vCPU + 7.5GB RAM,my-prod-project,projects/my-prod-project/instances/prod-db,42.30,USD,720,hour
+2026-03-01T00:00:00Z,2026-03-02T00:00:00Z,Kubernetes Engine,GKE Cluster Management Fee,my-prod-project,projects/my-prod-project/zones/us-central1/clusters/prod-cluster,72.00,USD,720,hour
+2026-03-02T00:00:00Z,2026-03-03T00:00:00Z,Compute Engine,N2 Instance Core running in Americas,my-prod-project,projects/my-prod-project/zones/us-central1-a/instances/api-vm-001,112.50,USD,720,hour
+2026-03-02T00:00:00Z,2026-03-03T00:00:00Z,Cloud Storage,Standard Storage US,my-prod-project,,8.10,USD,270000,gibibyte month
+2026-03-02T00:00:00Z,2026-03-03T00:00:00Z,Cloud SQL,Cloud SQL for PostgreSQL: Zonal - 2 vCPU + 7.5GB RAM,my-prod-project,projects/my-prod-project/instances/prod-db,42.30,USD,720,hour
+2026-03-02T00:00:00Z,2026-03-03T00:00:00Z,Kubernetes Engine,GKE Cluster Management Fee,my-prod-project,projects/my-prod-project/zones/us-central1/clusters/prod-cluster,72.00,USD,720,hour

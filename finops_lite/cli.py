@@ -1393,6 +1393,43 @@ def validate_focus(ctx, csv_file, verbose, spec):
 
 
 @cli.group()
+@click.pass_context
+def ingest(ctx):
+    """📥 Ingest and normalize third-party billing CSV exports to FOCUS 1.0."""
+    pass
+
+
+@ingest.command("focus")
+@click.option(
+    "--file",
+    "-f",
+    "input_file",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    required=True,
+    help="Path to a billing CSV export (Azure Cost Management or GCP Billing).",
+)
+@click.pass_context
+def ingest_focus(ctx, input_file: Path):
+    """Normalize a billing CSV to FOCUS 1.0 columns and write to stdout.
+
+    Provider is auto-detected from CSV column names. Supported:
+    Azure Cost Management exports, GCP Billing exports, and existing FOCUS 1.0 CSVs.
+    """
+    try:
+        import sys as _sys
+
+        from .providers.detector import normalize_to_focus
+
+        normalize_to_focus(input_file, file=_sys.stdout)
+    except ValueError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        raise SystemExit(2)
+    except Exception as exc:
+        click.echo(f"Error reading {input_file}: {exc}", err=True)
+        raise SystemExit(1)
+
+
+@cli.group()
 def cache():
     """💾 Cache management commands."""
     pass

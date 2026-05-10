@@ -122,6 +122,14 @@ finops cost overview --output-format executive  # executive Markdown summary
 
 ---
 
+## Pipeline
+
+FinOps Lite is step one. From here:
+
+- **[FinOps Watchdog](https://github.com/cloudandcapital/finops-watchdog)** — run anomaly detection on any cost CSV, including the FOCUS export above
+- **[Recovery Economics](https://github.com/cloudandcapital/recovery-economics)** — model and compare backup/restore cost scenarios
+- **[Cloud Cost Guard](https://github.com/cloudandcapital/cloud-cost-guard)** — full dashboard with spend trends, savings coverage, and rightsizing
+
 ## License
 
 MIT © 2025 Diana Molski, Cloud & Capital

@@ -20,16 +20,16 @@ from finops_lite.signals.from_services import REQUIRED_COLUMNS
 
 
 FOCUS_EXPORT_COLUMNS = [
+    "BilledCost",
+    "ResourceId",
+    "ServiceName",
+    "ChargePeriodStart",
+    "ChargePeriodEnd",
+    "ChargeType",
     "provider",
-    "service",
-    "resource_id",
-    "environment",
-    "cost",
     "currency",
     "usage_amount",
     "usage_unit",
-    "time_window_start",
-    "time_window_end",
     "allocation_method",
     "allocation_confidence",
 ]
@@ -79,7 +79,22 @@ def _patch_cost_explorer_service(
             writer = csv.DictWriter(out, fieldnames=FOCUS_EXPORT_COLUMNS)
             writer.writeheader()
             for row in focus_rows:
-                writer.writerow(row)
+                # Normalize legacy snake_case keys to FOCUS 1.0 names if needed
+                normalized = {
+                    "BilledCost": row.get("BilledCost") or row.get("cost", ""),
+                    "ResourceId": row.get("ResourceId") or row.get("resource_id", ""),
+                    "ServiceName": row.get("ServiceName") or row.get("service", ""),
+                    "ChargePeriodStart": row.get("ChargePeriodStart") or row.get("time_window_start", ""),
+                    "ChargePeriodEnd": row.get("ChargePeriodEnd") or row.get("time_window_end", ""),
+                    "ChargeType": row.get("ChargeType", "Usage"),
+                    "provider": row.get("provider", ""),
+                    "currency": row.get("currency", ""),
+                    "usage_amount": row.get("usage_amount", ""),
+                    "usage_unit": row.get("usage_unit", ""),
+                    "allocation_method": row.get("allocation_method", ""),
+                    "allocation_confidence": row.get("allocation_confidence", ""),
+                }
+                writer.writerow(normalized)
 
     import finops_lite.core.cost_explorer as cost_explorer_module
 
@@ -104,9 +119,9 @@ def _create_service_rollup_from_focus_csv(focus_csv_path, rollup_csv_path):
     with focus_csv_path.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            service = (row.get("service") or "Unknown").strip()
-            totals[service] += float(row.get("cost") or 0.0)
-            day_counts[service].add(row.get("time_window_start") or "")
+            service = (row.get("ServiceName") or row.get("service") or "Unknown").strip()
+            totals[service] += float(row.get("BilledCost") or row.get("cost") or 0.0)
+            day_counts[service].add(row.get("ChargePeriodStart") or row.get("time_window_start") or "")
 
     grand_total = sum(totals.values()) or 1.0
 

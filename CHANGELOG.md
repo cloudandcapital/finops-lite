@@ -55,12 +55,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **FOCUS 1.0 column names** — `finops export focus` now outputs proper FOCUS 1.0 compliant column names: `BilledCost`, `ResourceId`, `ServiceName`, `ChargePeriodStart`, `ChargePeriodEnd`, `ChargeType`.
+- **Azure Cost Management support** — `finops ingest focus --file billing.csv` auto-detects Azure billing CSV exports by column signature (`BillingCurrency`, `CostInBillingCurrency`, `SubscriptionId`) and normalizes to FOCUS 1.0 output.
+- **GCP Billing export support** — same `ingest focus` command handles GCP billing CSV exports (detected via `usage_start_time` and `service.description` columns).
+- **Multi-cloud provider auto-detection** — inspects CSV column names and dispatches to the correct provider parser without requiring a `--provider` flag.
+- **Pipeline framing** — README rewritten to open with the Visibility → Variance → Tradeoffs system context and cross-links to all four pipeline tools.
+- **GitHub Actions CI** — pytest runs on Python 3.10, 3.11, and 3.12 on every push.
+- **examples/** — sample AWS billing CSV and expected output walkthrough.
+
 ### Planned
-- Real AWS Cost Explorer integration
 - Multi-account support for organizations
 - Real-time cost alerts with Slack/email integration
 - Budget tracking and forecasting
-- Custom dashboards and reporting
-- API integration for programmatic access
-- Interactive tag fixing functionality
-- Advanced rightsizing analysis with historical data
