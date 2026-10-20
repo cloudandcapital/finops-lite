@@ -94,6 +94,7 @@ def _metric(
     formula: str | None = None,
     input_metric_ids: list[str] | None = None,
     unknown_reason: str | None = None,
+    preserve_precision: bool = False,
 ) -> dict[str, Any]:
     return {
         "id": metric_id,
@@ -102,9 +103,13 @@ def _metric(
             None
             if value is None
             else (
-                _percentage(value)
-                if currency is None and "percentage" in name.lower()
-                else _money(value)
+                value
+                if preserve_precision
+                else (
+                    _percentage(value)
+                    if currency is None and "percentage" in name.lower()
+                    else _money(value)
+                )
             )
         ),
         "unknown_reason": unknown_reason,

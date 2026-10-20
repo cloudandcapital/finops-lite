@@ -168,3 +168,7 @@ versions. This PR does not connect Cloud Cost Guard and does not change another 
 ## License
 
 MIT © 2026 Diana Molski, Cloud & Capital
+
+### Supplied billing CSVs (draft integration)
+
+The credential-free [billing CSV adapter](docs/billing-csv.md) produces canonical signed billed-cost metrics, exact comparisons and eligible observed daily evidence for Guard. This is an input to FinOps Lite, not a separate dashboard calculator. The supported profile and partial-coverage rules are documented there.

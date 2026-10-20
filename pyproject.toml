@@ -42,6 +42,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "cloudandcapital-ccac @ https://github.com/cloudandcapital/cloud-capital-analysis-contract/releases/download/v0.2.0/cloudandcapital_ccac-0.2.0-py3-none-any.whl#sha256=bc46f363b1a03c94cf0da75759bccd0271de2c53b1f77a1a7255f9c8e7f768f1",
     "black>=26,<27",
     "flake8>=7,<8",
     "isort>=6,<7",
@@ -63,3 +64,6 @@ path = "finops_lite/__init__.py"
 
 [tool.black]
 target-version = ["py310"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
