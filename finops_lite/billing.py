@@ -32,13 +32,13 @@ def text_decimal(value):
 
 def amount(value):
     if not isinstance(value, str) or not re.fullmatch(
-        r"[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,8})?", value
+        r"[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,18})?", value
     ):
         raise CCACBuildError(
-            "Cost needs a signed decimal with up to 8 places; no currency symbol or scientific notation."
+            "Cost needs a signed decimal with up to 18 places; no currency symbol or scientific notation."
         )
     number = Decimal(value.replace(",", ""))
-    if abs(number) > MAX_AMOUNT:
+    if number.copy_abs() > MAX_AMOUNT:
         raise CCACBuildError(
             "A cost exceeds the supported limit of one trillion per currency."
         )
@@ -57,9 +57,17 @@ def day(value):
     return result
 
 
-def boundary(value):
+def boundary(value, timestamp_basis=None):
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value or ""):
         return datetime.combine(day(value), datetime.min.time(), timezone.utc)
+    if re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?", value or ""
+    ):
+        if timestamp_basis != "UTC":
+            raise CCACBuildError(
+                "This timestamp has no timezone. Confirm UTC only if the export's timestamps are UTC; otherwise export explicit UTC timestamps."
+            )
+        value += "Z"
     if not re.fullmatch(
         r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|\+00:00)",
         value or "",
@@ -76,9 +84,13 @@ def stamp(value):
     return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def normalize_csv(text, filename="billing.csv"):
-    if not filename.lower().endswith(".csv"):
-        raise CCACBuildError("Choose uncompressed CSV files.")
+def normalize_csv(text, filename="billing.csv", *, timestamp_basis=None):
+    # Transport may decompress Gzip first. The content and its source digest
+    # remain the original expanded CSV text, never a rewritten table.
+    if not filename.lower().endswith((".csv", ".csv.gz")):
+        raise CCACBuildError("Choose CSV or Gzip CSV files.")
+    if timestamp_basis not in {None, "UTC"}:
+        raise CCACBuildError("The only supported timestamp confirmation is UTC.")
     if (
         not isinstance(text, str)
         or "\x00" in text
@@ -140,7 +152,7 @@ def normalize_csv(text, filename="billing.csv"):
                     "This credit has a positive cost. Enter credits as negative amounts."
                 )
             start = (
-                boundary(get(names[0]))
+                boundary(get(names[0]), timestamp_basis)
                 if focus
                 else boundary(day(get(names[0])).isoformat())
             )
@@ -149,7 +161,9 @@ def normalize_csv(text, filename="billing.csv"):
                     "ChargePeriodEnd is empty; supply the exclusive end date."
                 )
             end = (
-                boundary(get(names[4])) if get(names[4]) else start + timedelta(days=1)
+                boundary(get(names[4]), timestamp_basis)
+                if get(names[4])
+                else start + timedelta(days=1)
             )
             if not focus and get(names[4]):
                 day(get(names[4]))
@@ -218,7 +232,12 @@ def prepare_period(files, options=None):
     if sum(len(item.get("text", "").encode("utf-8")) for item in files) > MAX_BYTES:
         raise CCACBuildError("Choose CSV files totaling 10 MB or less for each period.")
     parsed = [
-        normalize_csv(item["text"], item.get("name", "billing.csv")) for item in files
+        normalize_csv(
+            item["text"],
+            item.get("name", "billing.csv"),
+            timestamp_basis=options.get("timestampBasis"),
+        )
+        for item in files
     ]
     source_rows = [row for item in parsed for row in item["rows"]]
     if len(source_rows) > MAX_ROWS:
@@ -273,6 +292,10 @@ def prepare_period(files, options=None):
             "This bill has more than 1,000 service groups. Export a smaller period or fewer accounts."
         )
     warnings = []
+    if options.get("timestampBasis") == "UTC":
+        warnings.append(
+            "You confirmed that timestamps without a timezone are UTC. Original CSV text is preserved."
+        )
     if repeated:
         warnings.append(f"{repeated} repeated record IDs counted once.")
     if identical:
@@ -298,6 +321,7 @@ def prepare_period(files, options=None):
             if options.get("start") or options.get("end")
             else "Coverage inferred from charge dates; a complete invoice period is not confirmed"
         ),
+        timestampBasis=options.get("timestampBasis"),
         sources=[
             dict(name=item["name"], format=item["format"], rows=len(item["rows"]))
             for item in parsed
@@ -389,8 +413,14 @@ def _build(current_files, previous_files, options, run_id, generated_at, mode):
                     ),
                     lossy_mapping=True,
                     mapping_notes=[
-                        "Supported signed billed-cost columns are preserved; source coverage is not assumed complete."
-                    ],
+                        "Supported signed billed-cost columns are preserved; source coverage is not assumed complete.",
+                        "Source content_sha256 identifies the original expanded UTF-8 CSV text, including any BOM and line endings.",
+                    ]
+                    + (
+                        ["The visitor confirmed UTC for timestamps without a timezone."]
+                        if options.get(label, {}).get("timestampBasis") == "UTC"
+                        else []
+                    ),
                 )
             )
             evidence.append(

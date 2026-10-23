@@ -26,8 +26,13 @@ FOCUS requires ChargePeriodStart, ChargePeriodEnd, ServiceName, BilledCost and
 BillingCurrency. EffectiveCost and ListCost are not substituted. This supported
 column reader is not a complete FOCUS conformance validator.
 
-Use UTF-8 uncompressed CSV, real ISO dates/UTC timestamps, a supported currency,
-and signed decimals with at most eight places. No FX, amortization, omitted tax,
+Pass expanded UTF-8 CSV text, real ISO dates/UTC timestamps, a supported currency,
+and signed decimals with at most 18 places. A transport may locally decompress
+`.csv.gz` first; the source hash identifies the expanded original CSV text.
+Timezone-less FOCUS timestamps require explicit
+`options={"current":{"timestampBasis":"UTC"}}` after confirming the export uses
+UTC. The choice appears in warnings and source mapping notes; source text is
+never rewritten. Non-UTC offsets remain unsupported. No FX, amortization, omitted tax,
 credit or account coverage is inferred. Invalid rows stop the entire selection.
 Each period supports 20 parts, 10 MB, 50,000 rows, 366 days and 1,000 service
 groups. Signed totals above one trillion in charges or adjustments are rejected.

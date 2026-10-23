@@ -57,7 +57,7 @@ def test_eight_place_decimals_do_not_round_to_cents_in_artifacts():
     [
         ("NaN", "USD", "2026-09-01"),
         ("1e3", "USD", "2026-09-01"),
-        ("1.000000001", "USD", "2026-09-01"),
+        ("1.0000000000000000001", "USD", "2026-09-01"),
         ("1", "ABC", "2026-09-01"),
         ("1", "USD", "2026-02-30"),
     ],
@@ -146,3 +146,52 @@ def test_json_boundary_rejects_duplicates_nonfinite_values_and_code_is_data():
         result["extensions"]["finops_lite"]["billing"]["current"]["rows"][0]["service"]
         == "__import__(os).system"
     )
+
+
+def test_provider_precision_is_exact_through_artifacts_and_credits():
+    result = build_billing_result(
+        csv(
+            "2026-09-01,Compute,999999999999.994999999999999999,USD,AWS,a\n"
+            "2026-09-01,Compute,0.000000000000000001,USD,AWS,b\n"
+            "2026-09-01,Credit,-0.00000000001,USD,AWS,c"
+        ),
+        **IDENTITY,
+    )
+    expected = Decimal("999999999999.99499999999")
+    assert metrics(result)["metric.tech-spend.scope.cloud"]["value"] == expected
+    assert loads_exact(dumps_exact(result)) == result
+    assert validate_document(result) == []
+
+
+def test_timezone_confirmation_is_explicit_and_kept_in_source_evidence():
+    import hashlib
+
+    current = csv(
+        "2024-09-01 01:00:00,Compute,0.00012345678,USD,2024-09-01 02:00:00,AWS",
+        header="ChargePeriodStart,ServiceName,BilledCost,BillingCurrency,ChargePeriodEnd,ProviderName",
+    )
+    current[0]["name"] = "focus.csv.gz"
+    with pytest.raises(CCACBuildError, match="Confirm UTC"):
+        build_billing_result(current, **IDENTITY)
+    result = build_billing_result(
+        current, options={"current": {"timestampBasis": "UTC"}}, **IDENTITY
+    )
+    view = result["extensions"]["finops_lite"]["billing"]["current"]
+    assert view["rows"][0]["start"] == "2024-09-01T01:00:00.000Z"
+    assert view["timestampBasis"] == "UTC"
+    assert any("confirmed" in warning for warning in view["warnings"])
+    assert (
+        result["inputs"][0]["content_sha256"]
+        == hashlib.sha256(current[0]["text"].encode()).hexdigest()
+    )
+    assert any("confirmed UTC" in note for note in result["inputs"][0]["mapping_notes"])
+    assert validate_document(result) == []
+    with pytest.raises(CCACBuildError, match="only supported"):
+        build_billing_result(
+            current, options={"current": {"timestampBasis": "local"}}, **IDENTITY
+        )
+    current[0]["text"] = current[0]["text"].replace("01:00:00", "01:00:00-07:00")
+    with pytest.raises(CCACBuildError, match="UTC timestamp"):
+        build_billing_result(
+            current, options={"current": {"timestampBasis": "UTC"}}, **IDENTITY
+        )
