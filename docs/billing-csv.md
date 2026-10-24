@@ -42,6 +42,9 @@ digits are accepted without dropping microseconds. FOCUS rows with an empty
 ServiceName keep their amounts and receive a supplied ChargeCategory plus
 service-not-supplied label, with a coverage warning. A blank name is not evidence
 of a particular service. Simple CSV still requires its Service value.
+Valid UTC timestamps at minute precision, such as `2024-06-12T00:00Z` in
+Microsoft's published EA example, are also accepted. Missing timezones still
+require explicit confirmation; non-UTC offsets are not guessed.
 
 ## Google Cloud Cost table
 
@@ -51,6 +54,13 @@ reset filters, choose the invoice month, use No grouping, and include Service
 description, Cost type and Unrounded cost. Cost is a supported rounded fallback;
 List cost is never substituted. Credits already appear as separate signed rows,
 so no other credit column is added to these amounts.
+
+Recognized invoice/statement key-value headers before the cost table are read
+separately, up to 32 nonblank metadata rows. Unknown preceding records stop the
+file; the reader does not search past arbitrary billing data. A clear three-letter
+document currency must match the confirmed currency. Invoice dates and header
+totals do not override the reporting month or become charges. Their presence is
+noted in evidence; the hash still covers the complete original CSV.
 
 Confirm the invoice month and three-letter billing currency explicitly:
 
