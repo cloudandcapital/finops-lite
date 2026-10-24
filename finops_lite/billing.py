@@ -170,7 +170,17 @@ def billing_header(reader):
     while not any(cell.strip() for cell in header):
         header = next(reader)
     fields = [cell.strip().lower() for cell in header]
-    if {"service description", "cost type"}.issubset(fields):
+    if (
+        {"service description", "cost type"}.issubset(fields)
+        or {"date", "service", "cost", "currency"}.issubset(fields)
+        or {
+            "chargeperiodstart",
+            "chargeperiodend",
+            "servicename",
+            "billedcost",
+            "billingcurrency",
+        }.issubset(fields)
+    ):
         return header, 0, None
     if not fields or fields[0] not in GOOGLE_DOCUMENT_FIELDS:
         return header, 0, None

@@ -17,6 +17,15 @@ DETAILS = {"month": "2026-09", "currency": "USD", "confirmed": True}
 HEADER = "ChargePeriodStart,ChargePeriodEnd,ServiceName,BilledCost,BillingCurrency\n"
 
 
+def test_existing_billing_headers_keep_any_column_order_and_extra_dimensions():
+    for text in [
+        "Currency,Date,Service,Cost\nUSD,2026-09-01,Compute,12.50",
+        "Invoice number,Date,Service,Cost,Currency\nINVENTED,2026-09-01,Compute,12.50,USD",
+        "Currency,ChargePeriodStart,ChargePeriodEnd,ServiceName,BilledCost,BillingCurrency\nUSD,2026-09-01T00:00Z,2026-09-02T00:00Z,Compute,12.50,USD",
+    ]:
+        assert normalize_csv(text)["rows"][0]["cost"] == "12.5"
+
+
 def test_published_microsoft_prefix_keeps_all_exact_charges_and_utc_boundaries():
     raw = gzip.decompress((ROOT / "microsoft-ea-focus-1000.csv.gz").read_bytes())
     assert (
