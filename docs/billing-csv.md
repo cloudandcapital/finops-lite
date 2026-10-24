@@ -128,10 +128,11 @@ Date must be a month start and missing EndDate becomes the next month start. An
 explicit EndDate remains authoritative. Without this option, Date still means
 one day, with a warning for ambiguous first-of-month records.
 
-When every FOCUS row supplies the same BillingPeriodStart/End, those dates define
+When every FOCUS row supplies BillingPeriodStart/End, those dates define
 the reporting/comparison window. ChargePeriod dates, including prior-period
-corrections, remain unchanged. Partial, inconsistent or conflicting billing
-windows stop the review. InvoiceId is retained where supplied, without making
+corrections, remain unchanged. Invalid or incomplete boundary pairs stop the
+review. Different billing windows use their combined range with a comparison
+warning; they are not presented as one verified invoice. InvoiceId is retained where supplied, without making
 a completeness claim. Neither native provider manifests nor invoice IDs establish
 coverage in this version.
 
