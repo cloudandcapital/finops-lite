@@ -1,5 +1,17 @@
 # Supplied billing CSV input
 
+Audit recheck: template summary labels include Invoice total, Total charges,
+Totals, Total due and currency-qualified totals such as Total (USD). They stop
+instead of becoming a charge. Real service names are not rejected merely for
+containing “total”; a credit card processing fee remains a positive charge.
+Google invoice-month headers support YYYY-MM and English Month YYYY. An unknown
+header format requires explicit visitor confirmation and a visible warning;
+a recognized conflicting month still stops. Explicit Tax rows retain their
+category and produce an exact tax metric, without validating tax correctness.
+Records wholly outside their supplied billing window remain in totals and
+exports but are excluded from that window’s daily spike observations. In-window
+gaps, partial days and negative daily sums still cannot become anomaly evidence.
+
 `finops_lite.billing.build_billing_result` is a credential-free input to the
 existing FinOps Lite CCAC producer. It owns normalization, signed billed-cost
 totals, service/provider/date metrics, comparisons, evidence and finding

@@ -39,6 +39,14 @@ def test_google_total_cannot_be_invalidated_by_duplicate_choice():
         "Total costs",
         "Amount due",
         "Net total:",
+        "Invoice total",
+        "Invoice total amount",
+        "Total charges",
+        "Totals",
+        "Total due",
+        "Total (USD)",
+        "TOTAL (USD):",
+        "Statement total",
     ],
 )
 def test_simple_total_lines_stop_instead_of_counting_twice(label):
@@ -173,3 +181,86 @@ def test_many_explicit_comma_groups_keep_bounded_warning_context():
     notes = [note for note in period["warnings"] if "thousands separators" in note]
     assert len(notes) == 1 and "100 Cost values" in notes[0]
     assert len(notes[0]) < 300
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Credit card processing fee",
+        "Credit-card transaction fee",
+        "Total Defense",
+        "Totaljobs",
+    ],
+)
+def test_real_service_labels_are_not_reclassified_as_credits_or_totals(label):
+    period = prepare_period(
+        files(f"Date,Service,Cost,Currency\n2026-09-02,{label},25,USD")
+    )
+    assert period["rows"][0]["cost"] == "25"
+
+
+def test_unambiguous_multiple_comma_groups_keep_exact_amount():
+    period = prepare_period(
+        files('Date,Service,Cost,Currency\n2026-09-02,Compute,"1,500,000",USD')
+    )
+    assert period["rows"][0]["cost"] == "1500000"
+
+
+@pytest.mark.parametrize(
+    "symbol,currency", [("¥", "USD"), ("￥", "EUR"), ("₹", "USD"), ("₩", "EUR")]
+)
+def test_other_known_currency_symbols_cannot_contradict_confirmation(symbol, currency):
+    with pytest.raises(CCACBuildError, match="currency does not match"):
+        normalize_csv(
+            f"Service description,Cost type,Cost ({symbol})\nCompute,Usage,59",
+            google_cost_table={
+                "month": "2026-09",
+                "currency": currency,
+                "confirmed": True,
+            },
+        )
+
+
+def test_google_human_month_is_checked_and_unknown_month_needs_explicit_confirmation():
+    table = "Service description,Cost type,Unrounded cost\nCompute,Usage,100\n,Tax,9\n,Tax,-1"
+    result = build_billing_result(
+        files("Invoice month,September 2026\n" + table), options={"current": CONTEXT}
+    )
+    layout = result["extensions"]["finops_lite"]["billing"]["current"]
+    metrics = {item["id"]: item["value"] for item in result["metrics"]}
+    assert metrics[layout["metric_ids"]["tax"]] == Decimal("8")
+    assert layout["rows"][1]["chargeCategory"] == "Tax"
+    with pytest.raises(CCACBuildError, match="invoice month does not match"):
+        prepare_period(files("Invoice month,August 2026\n" + table), CONTEXT)
+    period = prepare_period(files("Invoice month,Septembre 2026\n" + table), CONTEXT)
+    assert any(
+        "header format could not be compared" in warning
+        for warning in period["warnings"]
+    )
+
+
+def test_daily_evidence_keeps_in_window_usage_and_retains_correction_in_total():
+    from datetime import date, timedelta
+
+    header = "ChargePeriodStart,ChargePeriodEnd,ServiceName,BilledCost,BillingCurrency,BillingPeriodStart,BillingPeriodEnd,ChargeClass\n"
+    rows = [
+        f"{date(2026,9,d)},{date(2026,9,d)+timedelta(days=1)},EC2,{250 if d==25 else 100},USD,2026-09-01,2026-10-01,Usage"
+        for d in range(1, 31)
+    ]
+    rows.append("2026-08-20,2026-08-21,EC2,-10,USD,2026-09-01,2026-10-01,Correction")
+    result = build_billing_result(files(header + "\n".join(rows)))
+    layout = result["extensions"]["finops_lite"]["billing"]
+    metrics = {item["id"]: item for item in result["metrics"]}
+    assert metrics[layout["current"]["metric_ids"]["net"]]["value"] == Decimal("3140")
+    assert len(layout["current"]["rows"]) == 31
+    observations = [metrics[key] for key in layout["daily_observation_metric_ids"]]
+    assert len(observations) == 30
+    assert all(
+        item["dimensions"]["date"].startswith("2026-09-") for item in observations
+    )
+    assert sum(item["value"] for item in observations) == Decimal("3150")
+    assert any(
+        "1 record is wholly outside" in warning
+        for warning in layout["current"]["warnings"]
+    )
+    assert validate_document(result) == []
