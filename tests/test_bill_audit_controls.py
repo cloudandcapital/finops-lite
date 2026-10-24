@@ -148,10 +148,14 @@ def test_google_impossible_symbol_currency_pairs_stop(symbol, currency):
 
 
 def test_ambiguous_thousands_grouping_is_visible_and_unknown_header_never_skipped():
+    with pytest.raises(CCACBuildError, match="Cost is ambiguous"):
+        prepare_period(
+            files('Date,Service,Cost,Currency\n2026-09-01,Compute,"1,500",EUR')
+        )
     period = prepare_period(
-        files('Date,Service,Cost,Currency\n2026-09-01,Compute,"1,500",EUR')
+        files('Date,Service,Cost,Currency\n2026-09-01,Compute,"1,500.50",EUR')
     )
-    assert any("thousands separators (1500 EUR)" in text for text in period["warnings"])
+    assert any("line 2: 1500.5 EUR" in text for text in period["warnings"])
     with pytest.raises(
         CCACBuildError, match="Unrecognized Google document header: Amount due"
     ):
@@ -159,3 +163,13 @@ def test_ambiguous_thousands_grouping_is_visible_and_unknown_header_never_skippe
             "Amount due,59\nService description,Cost type,Unrounded cost\nCompute,Usage,59",
             google_cost_table=CONTEXT["googleCostTable"],
         )
+
+
+def test_many_explicit_comma_groups_keep_bounded_warning_context():
+    text = "Date,Service,Cost,Currency,RecordId\n" + "\n".join(
+        f'2026-09-02,Compute,"1,500.50",USD,{index}' for index in range(100)
+    )
+    period = prepare_period(files(text))
+    notes = [note for note in period["warnings"] if "thousands separators" in note]
+    assert len(notes) == 1 and "100 Cost values" in notes[0]
+    assert len(notes[0]) < 300

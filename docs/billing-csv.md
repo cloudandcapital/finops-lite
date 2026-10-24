@@ -118,7 +118,7 @@ dates are retained and flagged rather than silently relabelled or discarded.
 
 Simple-template Total/Subtotal/Grand total lines and positive credit/refund/discount
 labels stop the review, rather than changing their sign or counting totals twice.
-Comma grouping is disclosed as thousands separators. Currency symbols in Google
+Ambiguous comma-only amounts stop instead of guessing a locale. Explicit thousands groups with a decimal point are disclosed in one bounded warning per file, with at most three examples. Currency symbols in Google
 cost columns reject impossible currency confirmations; a dollar sign still needs
 an explicit three-letter code. Unknown metadata before a recognizable Google
 table remains an error and no rows are skipped.

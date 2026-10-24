@@ -92,6 +92,10 @@ def text_decimal(value):
 
 
 def amount(value):
+    if isinstance(value, str) and "," in value and "." not in value:
+        raise CCACBuildError(
+            "Cost is ambiguous: a comma alone could mean a decimal or thousands separator. Use 1500 for one thousand five hundred, or 1.50 for one and a half."
+        )
     if not isinstance(value, str) or not re.fullmatch(
         r"[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,18})?", value
     ):
@@ -484,6 +488,7 @@ def normalize_csv(
             )
         used = set(names + ["recordid", "billingaccountid", "chargecategory"])
         rows, missing_services, warnings = [], 0, []
+        comma_rows, comma_examples = 0, []
         billing_windows = set()
         if simple_date_basis not in {None, "daily", "monthly"}:
             raise CCACBuildError(
@@ -529,9 +534,11 @@ def normalize_csv(
                     f"{filename}, line {reader.line_num}: {service} has a positive cost. Check the bill and enter credits, refunds or discounts as negative amounts; their sign is never guessed."
                 )
             if "," in get(names[2]):
-                warnings.append(
-                    f"{filename}, line {reader.line_num}: commas in Cost were read as thousands separators ({text_decimal(cost)} {currency}). Use a decimal point, such as 1.50, for fractions."
-                )
+                comma_rows += 1
+                if len(comma_examples) < 3:
+                    comma_examples.append(
+                        f"line {reader.line_num}: {text_decimal(cost)} {currency}"
+                    )
             if get("chargecategory").lower() == "credit" and cost > 0:
                 raise CCACBuildError(
                     "This credit has a positive cost. Enter credits as negative amounts."
@@ -634,6 +641,10 @@ def normalize_csv(
         ) from exc
     if not rows:
         raise CCACBuildError(f"{filename}: this CSV needs at least one billing record.")
+    if comma_rows:
+        warnings.append(
+            f"{comma_rows:,} Cost values use commas as thousands separators and a decimal point for fractions. First examples: {'; '.join(comma_examples)}. Check these against the source bill."
+        )
     if not focus and simple_date_basis == "monthly":
         warnings.append(
             "You confirmed these simple-template records are monthly totals. Date is the month start and the next month start is the exclusive EndDate; these are not daily observations."
