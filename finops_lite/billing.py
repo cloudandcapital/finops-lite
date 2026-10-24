@@ -56,6 +56,34 @@ GOOGLE_CURRENCY_FIELDS = {
     "statement currency",
 }
 MAX_GOOGLE_DOCUMENT_ROWS = 32
+GOOGLE_TOTAL_FIELDS = {
+    "invoice total",
+    "invoice total amount",
+    "total amount due",
+    "statement total",
+    "total new activity",
+    "statement total new activity",
+}
+SYMBOL_CURRENCIES = {
+    "€": {"EUR"},
+    "£": {"GBP"},
+    "$": set(
+        "USD CAD AUD NZD SGD HKD TWD BBD BMD BSD BZD FJD GYD JMD KYD LRD NAD SBD SRD TTD XCD ZWL MXN ARS CLP COP UYU DOP CUP CUC PHP BND".split()
+    ),
+}
+
+
+def check_cost_currency(key, currency):
+    unit = re.search(r"\(([^()]+)\)$", key)
+    if not unit:
+        return
+    symbol = unit.group(1).strip()
+    if (re.fullmatch(r"[A-Za-z]{3}", symbol) and symbol.upper() != currency) or (
+        symbol in SYMBOL_CURRENCIES and currency not in SYMBOL_CURRENCIES[symbol]
+    ):
+        raise CCACBuildError(
+            "The confirmed currency does not match the Google cost column."
+        )
 
 
 def text_decimal(value):
@@ -181,10 +209,19 @@ def billing_header(reader):
             "billingcurrency",
         }.issubset(fields)
     ):
-        return header, 0, None
+        return header, 0, {}
     if not fields or fields[0] not in GOOGLE_DOCUMENT_FIELDS:
-        return header, 0, None
-    count, currencies = 0, set()
+        # Recognize only to explain the error. Never skip an unknown record.
+        for _ in range(39):
+            candidate = next(reader, [])
+            if {"service description", "cost type"}.issubset(
+                cell.strip().lower() for cell in candidate
+            ):
+                raise CCACBuildError(
+                    f"Unrecognized Google document header: {header[0][:100]}. No billing rows were skipped. Download the English ungrouped Cost table or use the simple template."
+                )
+        return header, 0, {}
+    count, currencies, metadata = 0, set(), {}
     while not {"service description", "cost type"}.issubset(fields):
         if (
             count >= MAX_GOOGLE_DOCUMENT_ROWS
@@ -198,6 +235,8 @@ def billing_header(reader):
             candidate = header[1].strip().upper()
             if candidate in CURRENCIES:
                 currencies.add(candidate)
+        if len(header) > 1:
+            metadata.setdefault(fields[0], []).append(header[1].strip())
         count += 1
         header = next(reader)
         while not any(cell.strip() for cell in header):
@@ -205,11 +244,12 @@ def billing_header(reader):
         fields = [cell.strip().lower() for cell in header]
     if len(currencies) > 1:
         raise CCACBuildError("Google document headers contain conflicting currencies.")
-    return header, count, next(iter(currencies), None)
+    metadata["currency"] = next(iter(currencies), None)
+    return header, count, metadata
 
 
 def normalize_google_cost_table(
-    text, filename, headers, reader, details, document_rows=0, document_currency=None
+    text, filename, headers, reader, details, document_rows=0, document=None
 ):
     """Google Cost table is invoice-month data; credits already have their own rows.
 
@@ -217,26 +257,26 @@ def normalize_google_cost_table(
     Never add separate credit columns or treat its Total row as another charge.
     """
     start, end, currency = google_invoice_window(details)
+    document = document or {}
+    document_currency = document.get("currency")
     if document_currency and document_currency != currency:
         raise CCACBuildError(
             "The confirmed currency does not match the Google document header."
         )
     cost_key = google_cost_column(headers)
-    unit = re.search(r"\(([A-Za-z]{3})\)$", cost_key)
-    if unit and unit.group(1).upper() != currency:
-        raise CCACBuildError(
-            "The confirmed currency does not match the Google cost column."
-        )
+    check_cost_currency(cost_key, currency)
+    for value in document.get("invoice month", []):
+        if not re.fullmatch(r"\d{4}-\d{2}", value) or value != details["month"]:
+            raise CCACBuildError(
+                f"The confirmed invoice month does not match the Google Invoice month header ({value[:40]}). Choose the month on the file."
+            )
     rounded_key = next(
         (key for key in headers if re.fullmatch(r"cost(?:\s*\([^()]+\))?", key)), None
     )
     if rounded_key:
-        rounded_unit = re.search(r"\(([A-Za-z]{3})\)$", rounded_key)
-        if rounded_unit and rounded_unit.group(1).upper() != currency:
-            raise CCACBuildError(
-                "The confirmed currency does not match the Google Cost column."
-            )
+        check_cost_currency(rounded_key, currency)
     rows, controls, missing_services, rounded_rows = [], [], 0, 0
+    outside_usage_dates = 0
     input_rows = 0
     for cells in reader:
         if not any(cell.strip() for cell in cells):
@@ -267,6 +307,10 @@ def normalize_google_cost_table(
         if kind == "total":
             controls.append(cost)
             continue
+        usage_date = get("usage start date") or get("usage date")
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", usage_date):
+            if not start <= day(usage_date) < end:
+                outside_usage_dates += 1
         service = get("service description")
         if not service:
             missing_services += 1
@@ -339,6 +383,10 @@ def normalize_google_cost_table(
         warnings.append(
             "Invoice/statement header information is separate from the Cost table charges. Its invoice date and total do not set the reporting month or prove complete coverage."
         )
+    if outside_usage_dates:
+        warnings.append(
+            f"{outside_usage_dates:,} charge rows have a usage date outside confirmed invoice month {details['month']}. Late charges can be valid; check the invoice month and any corrections. Usage dates do not replace invoice dates."
+        )
     if not cost_key.startswith("unrounded cost"):
         warnings.append(
             "This Google CSV supplies rounded Cost values. Include Unrounded cost for a more precise reconciliation."
@@ -349,7 +397,7 @@ def normalize_google_cost_table(
         )
     if controls:
         warnings.append(
-            "The Google Total row matches supplied charge rows at two-decimal invoice precision before duplicate handling; the Total row is not counted as a charge."
+            "The Google Total row is checked again after duplicate handling and is not counted as a charge."
         )
     else:
         warnings.append(
@@ -367,11 +415,22 @@ def normalize_google_cost_table(
         inputRowCount=input_rows,
         warnings=warnings,
         mappingNotes=notes,
+        googleTotal=text_decimal(controls[0]) if controls else None,
+        documentTotals=[
+            dict(label=key, value=value)
+            for key in sorted(GOOGLE_TOTAL_FIELDS)
+            for value in document.get(key, [])
+        ],
     )
 
 
 def normalize_csv(
-    text, filename="billing.csv", *, timestamp_basis=None, google_cost_table=None
+    text,
+    filename="billing.csv",
+    *,
+    timestamp_basis=None,
+    google_cost_table=None,
+    simple_date_basis=None,
 ):
     # Transport may decompress Gzip first. The content and its source digest
     # remain the original expanded CSV text, never a rewritten table.
@@ -387,7 +446,7 @@ def normalize_csv(
         raise CCACBuildError("Choose valid UTF-8 CSV files totaling 10 MB or less.")
     try:
         reader = csv.reader(io.StringIO(text.lstrip("\ufeff"), newline=""), strict=True)
-        header, document_rows, document_currency = billing_header(reader)
+        header, document_rows, document = billing_header(reader)
         headers = [cell.strip().lower() for cell in header]
         if (
             not headers
@@ -403,7 +462,7 @@ def normalize_csv(
                 reader,
                 google_cost_table,
                 document_rows,
-                document_currency,
+                document,
             )
         focus = "billedcost" in headers or "chargeperiodstart" in headers
         names = (
@@ -424,7 +483,12 @@ def normalize_csv(
                 "We could not find the supported billing columns. Use the simple template or a FOCUS BilledCost CSV."
             )
         used = set(names + ["recordid", "billingaccountid", "chargecategory"])
-        rows, missing_services = [], 0
+        rows, missing_services, warnings = [], 0, []
+        billing_windows = set()
+        if simple_date_basis not in {None, "daily", "monthly"}:
+            raise CCACBuildError(
+                "Choose daily records or confirmed monthly totals for the simple template."
+            )
         for cells in reader:
             if not any(cell.strip() for cell in cells):
                 continue
@@ -443,12 +507,31 @@ def normalize_csv(
                 raise CCACBuildError(
                     "Supply a Service label and keep service/provider names to 200 characters."
                 )
+            if not focus and re.fullmatch(
+                r"(?:grand\s+|sub\s*|net\s+)?total(?:\s+costs?)?|amount\s+due|balance\s+due",
+                service.strip().casefold().rstrip(":"),
+            ):
+                raise CCACBuildError(
+                    f"{filename}, line {reader.line_num}: {service} looks like a total line. Remove it so it is not counted twice; keep the individual charges, taxes and negative credits."
+                )
             currency = get(names[3]).upper()
             if currency not in CURRENCIES:
                 raise CCACBuildError(
                     "Currency needs a supported three-letter code such as USD, EUR, or GBP."
                 )
             cost = amount(get(names[2]))
+            if (
+                not focus
+                and cost > 0
+                and re.search(r"\b(?:credits?|refunds?|discounts?)\b", service, re.I)
+            ):
+                raise CCACBuildError(
+                    f"{filename}, line {reader.line_num}: {service} has a positive cost. Check the bill and enter credits, refunds or discounts as negative amounts; their sign is never guessed."
+                )
+            if "," in get(names[2]):
+                warnings.append(
+                    f"{filename}, line {reader.line_num}: commas in Cost were read as thousands separators ({text_decimal(cost)} {currency}). Use a decimal point, such as 1.50, for fractions."
+                )
             if get("chargecategory").lower() == "credit" and cost > 0:
                 raise CCACBuildError(
                     "This credit has a positive cost. Enter credits as negative amounts."
@@ -469,6 +552,14 @@ def normalize_csv(
             )
             if not focus and get(names[4]):
                 day(get(names[4]))
+            if not focus and not get(names[4]) and simple_date_basis == "monthly":
+                if start.day != 1:
+                    raise CCACBuildError(
+                        "Confirmed monthly totals need Date on the first of the month, or an explicit EndDate."
+                    )
+                end = boundary(
+                    f"{start.year + (start.month == 12):04d}-{start.month % 12 + 1:02d}-01"
+                )
             if end <= start:
                 raise CCACBuildError(
                     "The exclusive charge end must be after its start."
@@ -490,6 +581,31 @@ def normalize_csv(
                 file=filename,
                 line=reader.line_num,
             )
+            if focus and (get("billingperiodstart") or get("billingperiodend")):
+                if not get("billingperiodstart") or not get("billingperiodend"):
+                    raise CCACBuildError(
+                        "Supply both BillingPeriodStart and BillingPeriodEnd, or neither."
+                    )
+                bill_start = boundary(get("billingperiodstart"), timestamp_basis)
+                bill_end = boundary(get("billingperiodend"), timestamp_basis)
+                if (
+                    bill_start.time() != datetime.min.time()
+                    or bill_end.time() != datetime.min.time()
+                    or bill_end <= bill_start
+                ):
+                    raise CCACBuildError(
+                        "Billing period boundaries must be UTC midnights, with the exclusive end after the start."
+                    )
+                billing_windows.add(
+                    (bill_start.date().isoformat(), bill_end.date().isoformat())
+                )
+                row["billingStart"], row["billingEnd"] = str(bill_start.date()), str(
+                    bill_end.date()
+                )
+            if focus and get("invoiceid"):
+                if len(get("invoiceid")) > 300:
+                    raise CCACBuildError("InvoiceId must be 300 characters or fewer.")
+                row["invoiceId"] = get("invoiceid")
             extras = sorted(
                 (key, value) for key, value in values.items() if key not in used
             )
@@ -518,18 +634,30 @@ def normalize_csv(
         ) from exc
     if not rows:
         raise CCACBuildError(f"{filename}: this CSV needs at least one billing record.")
+    if not focus and simple_date_basis == "monthly":
+        warnings.append(
+            "You confirmed these simple-template records are monthly totals. Date is the month start and the next month start is the exclusive EndDate; these are not daily observations."
+        )
+    elif not focus:
+        if all(
+            row["start"][8:10] == "01"
+            and boundary(row["end"]) == boundary(row["start"]) + timedelta(days=1)
+            for row in rows
+        ):
+            warnings.append(
+                "These template rows cover one day on the 1st. If they are monthly totals, add the next month's first day as EndDate or confirm monthly totals when selecting the file."
+            )
+    if missing_services:
+        warnings.append(
+            f"{missing_services} FOCUS rows have no ServiceName; they are grouped by supplied ChargeCategory with a service-not-supplied label. Amounts are unchanged."
+        )
     return dict(
         name=filename,
         text=text,
         format="FOCUS BilledCost" if focus else "Simple billing CSV",
         rows=rows,
-        warnings=(
-            [
-                f"{missing_services} FOCUS rows have no ServiceName; they are grouped by supplied ChargeCategory with a service-not-supplied label. Amounts are unchanged."
-            ]
-            if missing_services
-            else []
-        ),
+        warnings=warnings,
+        billingWindows=sorted(billing_windows),
     )
 
 
@@ -548,6 +676,7 @@ def prepare_period(files, options=None):
             item.get("name", "billing.csv"),
             timestamp_basis=options.get("timestampBasis"),
             google_cost_table=options.get("googleCostTable"),
+            simple_date_basis=options.get("simpleDateBasis"),
         )
         for item in files
     ]
@@ -562,7 +691,7 @@ def prepare_period(files, options=None):
         raise CCACBuildError(
             f"These records contain {', '.join(currencies)}. Export one currency at a time; no exchange rates are applied."
         )
-    ids, fingerprints, rows = {}, set(), []
+    ids, fingerprints, rows, kept = {}, set(), [], set()
     repeated, identical = 0, 0
     for row in source_rows:
         fingerprint = row["fingerprint"]
@@ -583,21 +712,90 @@ def prepare_period(files, options=None):
                     continue
             fingerprints.add(fingerprint)
         rows.append({key: value for key, value in row.items() if key != "fingerprint"})
+        kept.add(id(row))
     if identical and policy == "review":
         raise CCACBuildError(
             f"{identical} repeated rows without a RecordId need your review. Choose Count once or Keep all in Identical rows."
         )
+    invoice_checks = []
+    for item in parsed:
+        if item["format"] != "Google Cloud Cost table CSV":
+            continue
+        with localcontext() as context:
+            context.prec = 50
+            net = sum(
+                (Decimal(row["cost"]) for row in item["rows"] if id(row) in kept),
+                Decimal(0),
+            )
+            rounded = net.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if item["googleTotal"] is not None:
+            expected = Decimal(item["googleTotal"])
+            if rounded != expected.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP):
+                raise CCACBuildError(
+                    f"{item['name']}: Count once would leave {text_decimal(net)} {currencies[0]}, but Google's Total says {text_decimal(expected)}. Keep all charges to match this file, or check for overlapping exports. No report was created."
+                )
+            invoice_checks.append(
+                dict(
+                    kind="Google Cost table Total",
+                    source=item["name"],
+                    status="matched",
+                    expected=text_decimal(expected),
+                    actual=text_decimal(net),
+                    currency=currencies[0],
+                )
+            )
+        for control in item["documentTotals"]:
+            try:
+                expected = amount(control["value"])
+                status = (
+                    "matched"
+                    if rounded
+                    == expected.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    else "different"
+                )
+            except CCACBuildError:
+                expected, status = None, "unreadable"
+            invoice_checks.append(
+                dict(
+                    kind=control["label"],
+                    source=item["name"],
+                    status=status,
+                    expected=text_decimal(expected) if expected is not None else None,
+                    actual=text_decimal(net),
+                    currency=currencies[0],
+                )
+            )
     first, last = min(boundary(row["start"]) for row in rows), max(
         boundary(row["end"]) for row in rows
     )
-    start = day(options["start"]) if options.get("start") else first.date()
+    billing_rows = [row for row in rows if row.get("billingStart")]
+    if billing_rows and len(billing_rows) != len(rows):
+        raise CCACBuildError(
+            "Some FOCUS rows have billing period boundaries and others do not. Include BillingPeriodStart and BillingPeriodEnd on every row, or remove both columns."
+        )
+    windows = {(row["billingStart"], row["billingEnd"]) for row in billing_rows}
+    if len(windows) > 1:
+        raise CCACBuildError(
+            "These records contain different billing periods. Review one billing period at a time, with its corrections kept inside that period."
+        )
+    billing_window = next(iter(windows), None)
+    coverage_first = boundary(billing_window[0]) if billing_window else first
+    coverage_last = boundary(billing_window[1]) if billing_window else last
+    start = day(options["start"]) if options.get("start") else coverage_first.date()
     end = (
         day(options["end"]) + timedelta(days=1)
         if options.get("end")
-        else last.date()
-        + (timedelta(days=1) if last.time() != datetime.min.time() else timedelta(0))
+        else coverage_last.date()
+        + (
+            timedelta(days=1)
+            if coverage_last.time() != datetime.min.time()
+            else timedelta(0)
+        )
     )
-    if boundary(start.isoformat()) > first or boundary(end.isoformat()) < last:
+    if (
+        boundary(start.isoformat()) > coverage_first
+        or boundary(end.isoformat()) < coverage_last
+    ):
         raise CCACBuildError("The selected dates leave out billing records.")
     days = (end - start).days
     if not 1 <= days <= 366:
@@ -607,6 +805,14 @@ def prepare_period(files, options=None):
             "This bill has more than 1,000 service groups. Export a smaller period or fewer accounts."
         )
     warnings = [warning for item in parsed for warning in item.get("warnings", [])]
+    if billing_window:
+        warnings.append(
+            "Reporting and comparison dates use the supplied FOCUS billing period. Charge dates are preserved, including corrections for earlier usage; these dates do not prove complete invoice coverage."
+        )
+    if any(check["status"] == "different" for check in invoice_checks):
+        warnings.append(
+            "The exported rows differ from a Google invoice/statement header total. Check filters, additional invoices and credit/debit memos before treating this as the full bill."
+        )
     google_files = [
         item for item in parsed if item["format"] == "Google Cloud Cost table CSV"
     ]
@@ -648,7 +854,11 @@ def prepare_period(files, options=None):
             else (
                 "Selected dates (inclusive in the form; end exclusive in downloads)"
                 if options.get("start") or options.get("end")
-                else "Coverage inferred from charge dates; a complete invoice period is not confirmed"
+                else (
+                    "Supplied FOCUS billing period; earlier charge corrections stay within this invoice review"
+                    if billing_window
+                    else "Coverage inferred from charge dates; a complete invoice period is not confirmed"
+                )
             )
         ),
         timestampBasis=options.get("timestampBasis"),
@@ -661,6 +871,7 @@ def prepare_period(files, options=None):
         repeatedIds=repeated,
         identicalRows=identical,
         duplicatePolicy=policy,
+        invoiceChecks=invoice_checks,
         warnings=warnings,
         spansMultipleDays=any(
             boundary(row["end"])
@@ -863,6 +1074,18 @@ def _build(current_files, previous_files, options, run_id, generated_at, mode):
                 ("credits", credits),
             ]
         }
+        refs["dailyAverage"] = metric(
+            prefix + ".daily-average",
+            f"{label} net cost per reporting day",
+            ((charges + credits) / data["days"]).quantize(
+                Decimal("0.000000000000000001"), rounding=ROUND_HALF_UP
+            ),
+            basis="calculated",
+            refs=[refs["net"]],
+            formula=f"supplied net cost / {data['days']} reporting days; rounded to 18 decimal places",
+            metric_period=own_period,
+            evidence_refs=evidence_refs,
+        )
         services = []
         for (provider, service), records in sorted(groups.items()):
             key = json.dumps(
@@ -1200,7 +1423,7 @@ def _build(current_files, previous_files, options, run_id, generated_at, mode):
             ref(current_layout["metric_ids"]["charges"]),
             " in positive charges and ",
             ref(current_layout["metric_ids"]["credits"]),
-            f" in credits or negative adjustments across {len(current['rows'])} records.",
+            f" in credits or negative adjustments across {len(current['rows']):,} {'record' if len(current['rows']) == 1 else 'records'}.",
         ],
     )
     leader = max(
@@ -1218,7 +1441,7 @@ def _build(current_files, previous_files, options, run_id, generated_at, mode):
                 ref(leader["metric_ids"]["charges"]),
                 " before credits. Its net cost is ",
                 ref(leader["metric_ids"]["net"]),
-                ".",
+                ". Next, ask the account owner which resources make up this service and whether usage or the price/discount changed. Check this against the service detail before making changes.",
             ],
         )
     else:
@@ -1265,7 +1488,7 @@ def _build(current_files, previous_files, options, run_id, generated_at, mode):
                 [
                     f"{driver['service']} ({driver['provider']}) changed by ",
                     ref(driver["delta_metric_id"]),
-                    f". {driver['coverage']}. This locates the change; billing amounts alone do not establish its cause.",
+                    f". {driver['coverage']}. Ask the owner: were resources added, did usage or a price/discount change, or did a credit end? These are checks to make, not causes established by this file.",
                 ],
             )
     else:
@@ -1277,12 +1500,41 @@ def _build(current_files, previous_files, options, run_id, generated_at, mode):
             ],
         )
     finding(
+        "daily-average",
+        "Daily average",
+        [
+            ref(current_layout["metric_ids"]["dailyAverage"]),
+            f" net per reporting day across {current['days']} days.",
+        ]
+        + (
+            [
+                " Earlier upload: ",
+                ref(previous_layout["metric_ids"]["dailyAverage"]),
+                f" per day across {previous['days']} days.",
+            ]
+            if previous
+            else []
+        )
+        + [
+            " This divides supplied period totals by reporting days. It is not measured daily usage or a forecast; incomplete coverage can make it misleading."
+        ],
+    )
+    finding(
         "context",
         "Before you act",
         [
             "These are the records you supplied, not a verified invoice or a savings estimate. Check the period, account coverage, and billed-cost basis against your provider bill. Utilization, pricing changes, and business activity are needed to explain why costs moved."
         ],
     )
+    service_difference = cloud["value"] - sum(
+        (
+            by_id[row["metric_ids"]["net"]]["value"]
+            for row in current_layout["services"]
+        ),
+        Decimal(0),
+    )
+    if service_difference != 0:
+        raise CCACBuildError("Supplied service totals do not match the net cost.")
     reconciliation = [
         dict(
             id="reconciliation.cloud.uploaded-services",
@@ -1291,7 +1543,7 @@ def _build(current_files, previous_files, options, run_id, generated_at, mode):
                 row["metric_ids"]["net"] for row in current_layout["services"]
             ],
             output_metric_id=cloud["id"],
-            difference=Decimal(0),
+            difference=service_difference,
             tolerance=Decimal(0),
             status="passed",
         )
