@@ -6,11 +6,16 @@ instead of becoming a charge. Real service names are not rejected merely for
 containing “total”; a credit card processing fee remains a positive charge.
 Service/monthly totals and tax/currency-qualified summary labels are also blocked.
 Vendor-prefixed card fees remain charges; a separately named refund or credit
-still requires its signed amount. In a flat, same-window simple CSV with at least
-three rows, a row equal to the combined other counted rows receives a possible
-summary warning. Every row stays included: equal values do not prove a duplicate
-or summary. Review details name the original file/line and are capped at five;
-the full candidate count and original records are preserved.
+still requires its signed amount. Total tax and Total VAT can be real charge
+labels; Total incl. tax and Total after credits are bill summaries and stop.
+In a simple CSV with at least three counted rows, possible-summary checks cover
+the whole file, starting calendar-month groups, and a leading/trailing amount
+equal to a block of at least two other rows. Dates need not match. Work is linear
+in row count; arbitrary subset matching is not attempted. Every row stays
+included: a match can be a real charge and never establishes an invoice boundary.
+Details name the original file/line, deduplicate matches and are capped at five;
+the full candidate count and original records are preserved. Independent source
+files are not combined to guess summaries.
 
 Google invoice-month headers support YYYY-MM and English Month YYYY. An unknown
 header format requires explicit visitor confirmation and a visible warning;
