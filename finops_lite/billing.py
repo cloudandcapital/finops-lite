@@ -443,7 +443,7 @@ def normalize_google_cost_table(
         )
     if document_rows:
         notes.append(
-            f"Read {document_rows} invoice/statement header rows separately from the Cost table; they are document metadata, not charge records."
+            f"Read {document_rows} invoice/statement header {'row' if document_rows == 1 else 'rows'} separately from the Cost table; they are document metadata, not charge records."
         )
         warnings.append(
             "Invoice/statement header information is separate from the Cost table charges. Its invoice date and total do not set the reporting month or prove complete coverage."
@@ -470,7 +470,7 @@ def normalize_google_cost_table(
         )
     if missing_services:
         warnings.append(
-            f"{missing_services} Google rows have no service description; their cost-type labels identify unassigned charges, not known services."
+            f"{missing_services} Google {'row has' if missing_services == 1 else 'rows have'} no service description; their cost-type labels identify unassigned charges, not known services."
         )
     return dict(
         name=filename,
@@ -701,7 +701,7 @@ def normalize_csv(
         raise CCACBuildError(f"{filename}: this CSV needs at least one billing record.")
     if comma_rows:
         warnings.append(
-            f"{comma_rows:,} Cost values use commas as thousands separators and a decimal point for fractions. First examples: {'; '.join(comma_examples)}. Check these against the source bill."
+            f"{comma_rows:,} Cost {'value uses' if comma_rows == 1 else 'values use'} commas as thousands separators and a decimal point for fractions. First examples: {'; '.join(comma_examples)}. Check these against the source bill."
         )
     if not focus and simple_date_basis == "monthly":
         warnings.append(
@@ -718,7 +718,7 @@ def normalize_csv(
             )
     if missing_services:
         warnings.append(
-            f"{missing_services} FOCUS rows have no ServiceName; they are grouped by supplied ChargeCategory with a service-not-supplied label. Amounts are unchanged."
+            f"{missing_services} FOCUS {'row has' if missing_services == 1 else 'rows have'} no ServiceName; they are grouped by supplied ChargeCategory with a service-not-supplied label. Amounts are unchanged."
         )
     return dict(
         name=filename,
@@ -784,7 +784,7 @@ def prepare_period(files, options=None):
         kept.add(id(row))
     if identical and policy == "review":
         raise CCACBuildError(
-            f"{identical} repeated rows without a RecordId need your review. Choose Count once or Keep all in Identical rows."
+            f"{identical} repeated {'row' if identical == 1 else 'rows'} without a RecordId {'needs' if identical == 1 else 'need'} your review. Choose Count once or Keep all in Identical rows."
         )
     invoice_checks = []
     for item in parsed:
@@ -914,7 +914,7 @@ def prepare_period(files, options=None):
         warnings.append(f"{repeated} repeated record IDs counted once.")
     if identical:
         warnings.append(
-            f"{identical} identical rows without IDs {'kept as separate charges' if policy == 'keep' else 'counted once'} by your choice."
+            f"{identical} identical {'row' if identical == 1 else 'rows'} without IDs {'kept as separate charges' if policy == 'keep' else 'counted once'} by your choice."
         )
     if any(not row["recordId"] for row in rows):
         warnings.append(
