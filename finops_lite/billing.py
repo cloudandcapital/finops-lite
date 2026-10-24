@@ -83,6 +83,17 @@ def summary_service_label(value):
     if tokens and (tokens[-1].upper() in CURRENCIES or tokens[-1] in SYMBOL_CURRENCIES):
         tokens.pop()
     tokens = [token.casefold() for token in tokens]
+    # A sole tax/VAT charge can legitimately be labelled Total tax. It is not
+    # the bill total. Keep qualified bill summaries such as Total incl. tax.
+    if (
+        tokens[:1] == ["total"]
+        and any(token in {"tax", "taxes", "vat"} for token in tokens[1:])
+        and all(
+            token in {"tax", "taxes", "vat", "amount", "charge", "charges"}
+            for token in tokens[1:]
+        )
+    ):
+        return False
     if tokens in (["amount", "due"], ["balance", "due"]):
         return True
     totals = [
@@ -96,7 +107,7 @@ def summary_service_label(value):
         "grand net invoice statement final service monthly annual yearly daily period account billing bill sub".split()
     )
     suffix = set(
-        "cost costs charge charges amount due payable for this the invoice statement bill month period service incl including excl excluding with without tax taxes vat".split()
+        "cost costs charge charges amount due payable for this the invoice statement bill month period service incl including excl excluding with without tax taxes vat after before credit credits adjustments discounts".split()
     )
     index = totals[0]
     return all(token in prefix for token in tokens[:index]) and all(
@@ -946,19 +957,36 @@ def prepare_period(files, options=None):
         if item["format"] != "Simple billing CSV":
             continue
         records = [row for row in item["rows"] if id(row) in kept]
-        # A flat invoice-style group can contain a summary under any name.
-        # Equal amounts are only a warning: legitimate charges can coincide.
-        if (
-            len(records) < 3
-            or len({(row["start"], row["end"]) for row in records}) != 1
-        ):
+        # Date differences do not make invoice totals safe. Check the whole
+        # file and each starting calendar month, plus a leading/trailing
+        # summary around a block of at least two rows. This is linear work,
+        # not arbitrary subset matching or an inferred invoice boundary.
+        if len(records) < 3:
             continue
+        monthly = defaultdict(list)
+        for row in records:
+            monthly[row["start"][:7]].append(row)
+        groups = [records] + list(monthly.values())
+        candidates = set()
         with localcontext() as context:
             context.prec = 50
-            net = sum((Decimal(row["cost"]) for row in records), Decimal(0))
+            for group in groups:
+                if len(group) < 3:
+                    continue
+                net = sum((Decimal(row["cost"]) for row in group), Decimal(0))
+                preceding = Decimal(0)
+                for index, row in enumerate(group):
+                    value = Decimal(row["cost"])
+                    following = net - preceding - value
+                    if value and (
+                        value * 2 == net
+                        or (index >= 2 and value == preceding)
+                        or (len(group) - index - 1 >= 2 and value == following)
+                    ):
+                        candidates.add(id(row))
+                    preceding += value
             for row in records:
-                value = Decimal(row["cost"])
-                if value and value * 2 == net:
+                if id(row) in candidates:
                     potential_summary_count += 1
                     if len(potential_summary_rows) < 5:
                         potential_summary_rows.append(
@@ -970,7 +998,7 @@ def prepare_period(files, options=None):
                         )
     if potential_summary_count:
         warnings.append(
-            f"{potential_summary_count} possible total {'row matches' if potential_summary_count == 1 else 'rows match'} the combined amount of the other counted rows in the same simple CSV. All rows remain included. A real charge can also match; check the source and remove a row only if it is a summary."
+            f"{potential_summary_count} possible total {'row matches' if potential_summary_count == 1 else 'rows match'} a combined amount in other counted rows in the same simple CSV. Dates can differ. All rows remain included. A real charge can also match; check the source and remove a row only if it is a summary."
         )
     return dict(
         currency=currencies[0],
