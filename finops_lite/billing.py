@@ -774,11 +774,11 @@ def prepare_period(files, options=None):
             "Some FOCUS rows have billing period boundaries and others do not. Include BillingPeriodStart and BillingPeriodEnd on every row, or remove both columns."
         )
     windows = {(row["billingStart"], row["billingEnd"]) for row in billing_rows}
-    if len(windows) > 1:
-        raise CCACBuildError(
-            "These records contain different billing periods. Review one billing period at a time, with its corrections kept inside that period."
-        )
-    billing_window = next(iter(windows), None)
+    billing_window = (
+        (min(window[0] for window in windows), max(window[1] for window in windows))
+        if windows
+        else None
+    )
     coverage_first = boundary(billing_window[0]) if billing_window else first
     coverage_last = boundary(billing_window[1]) if billing_window else last
     start = day(options["start"]) if options.get("start") else coverage_first.date()
@@ -808,6 +808,10 @@ def prepare_period(files, options=None):
     if billing_window:
         warnings.append(
             "Reporting and comparison dates use the supplied FOCUS billing period. Charge dates are preserved, including corrections for earlier usage; these dates do not prove complete invoice coverage."
+        )
+    if len(windows) > 1:
+        warnings.append(
+            "These records span different supplied billing windows. Reporting dates cover their combined range, not one verified invoice. Check that the earlier upload uses comparable accounts and billing windows before comparing."
         )
     if any(check["status"] == "different" for check in invoice_checks):
         warnings.append(

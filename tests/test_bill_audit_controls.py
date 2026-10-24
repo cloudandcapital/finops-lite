@@ -99,6 +99,24 @@ def test_billing_period_keeps_prior_usage_correction_in_current_invoice():
     ] == Decimal("3")
 
 
+def test_combined_provider_billing_windows_are_not_rejected_as_one_invoice():
+    header = "ChargePeriodStart,ChargePeriodEnd,ServiceName,BilledCost,BillingCurrency,BillingPeriodStart,BillingPeriodEnd,ProviderName\n"
+    period = prepare_period(
+        files(
+            header
+            + "2026-09-10,2026-09-11,Compute,10,USD,2026-09-01,2026-10-01,AWS\n2026-09-10,2026-09-11,Compute,20,USD,2026-08-15,2026-09-15,Azure"
+        )
+    )
+    assert (period["start"], period["end"], period["days"]) == (
+        "2026-08-15",
+        "2026-10-01",
+        47,
+    )
+    assert any(
+        "different supplied billing windows" in text for text in period["warnings"]
+    )
+
+
 @pytest.mark.parametrize("label", ["Credits", "Refund", "Promotional discount"])
 def test_positive_credit_labels_are_not_silently_counted_as_charges(label):
     with pytest.raises(CCACBuildError, match="has a positive cost"):
