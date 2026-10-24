@@ -104,3 +104,38 @@ Canonical artifact JSON contains exact numeric tokens. Use `dumps_exact` and
 precision. Presentation amounts are formatted only after released CCAC and
 Command Center validation. Tests use invented records; no customer data belongs
 in repository fixtures or public GitHub workflow inputs.
+
+## Independent bill-review controls
+
+Google Cost table Total is checked again after duplicate handling. A Count once
+choice cannot produce a report that contradicts the source Total. Invoice/statement
+header totals are separately compared at two decimal places and recorded in
+`invoiceChecks`. A difference is a visible review warning, not an automatic claim
+of missing charges: Google's own documentation describes valid timing, multiple
+invoice and memo differences. Unreadable header amounts are flagged, not guessed.
+An explicit Invoice month header must match the confirmed month; earlier usage
+dates are retained and flagged rather than silently relabelled or discarded.
+
+Simple-template Total/Subtotal/Grand total lines and positive credit/refund/discount
+labels stop the review, rather than changing their sign or counting totals twice.
+Comma grouping is disclosed as thousands separators. Currency symbols in Google
+cost columns reject impossible currency confirmations; a dollar sign still needs
+an explicit three-letter code. Unknown metadata before a recognizable Google
+table remains an error and no rows are skipped.
+
+For monthly simple totals, pass `simpleDateBasis: "monthly"` after confirmation;
+Date must be a month start and missing EndDate becomes the next month start. An
+explicit EndDate remains authoritative. Without this option, Date still means
+one day, with a warning for ambiguous first-of-month records.
+
+When every FOCUS row supplies the same BillingPeriodStart/End, those dates define
+the reporting/comparison window. ChargePeriod dates, including prior-period
+corrections, remain unchanged. Partial, inconsistent or conflicting billing
+windows stop the review. InvoiceId is retained where supplied, without making
+a completeness claim. Neither native provider manifests nor invoice IDs establish
+coverage in this version.
+
+Daily average is a producer-owned metric: supplied signed net divided by reporting
+days, rounded to 18 decimal places. It is not measured daily usage, a run-rate
+forecast or a complete-account estimate. Findings include questions to ask the
+account owner; these are next checks, not causes inferred from a cost file.
