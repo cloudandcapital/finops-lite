@@ -23,6 +23,39 @@ PROFILE = "billing_csv/1.0"
 MAX_ROWS, MAX_BYTES, MAX_FILES, MAX_GROUPS = 50000, 10 * 1024 * 1024, 20, 1000
 MAX_AMOUNT = Decimal("1000000000000")
 CURRENCIES = json.loads(Path(__file__).with_name("billing_currencies.json").read_text())
+GOOGLE_DOCUMENT_FIELDS = {
+    "invoice number",
+    "invoice date",
+    "invoice total",
+    "invoice total amount",
+    "total amount due",
+    "due date",
+    "payment due date",
+    "payment terms",
+    "statement number",
+    "statement date",
+    "statement total",
+    "total new activity",
+    "statement total new activity",
+    "billing account id",
+    "billing account name",
+    "currency",
+    "currency code",
+    "invoice currency",
+    "statement currency",
+    "exchange rate",
+    "currency exchange rate",
+    "publisher type",
+    "invoice month",
+    "billing period",
+}
+GOOGLE_CURRENCY_FIELDS = {
+    "currency",
+    "currency code",
+    "invoice currency",
+    "statement currency",
+}
+MAX_GOOGLE_DOCUMENT_ROWS = 32
 
 
 def text_decimal(value):
@@ -64,7 +97,7 @@ def boundary(value, timestamp_basis=None):
     if isinstance(value, str) and value.endswith(" UTC"):
         value = value[:-4] + "Z"
     if re.fullmatch(
-        r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?", value or ""
+        r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?", value or ""
     ):
         if timestamp_basis != "UTC":
             raise CCACBuildError(
@@ -72,7 +105,7 @@ def boundary(value, timestamp_basis=None):
             )
         value += "Z"
     if not re.fullmatch(
-        r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)",
+        r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|\+00:00)",
         value or "",
     ):
         raise CCACBuildError("Use an ISO date or UTC timestamp ending in Z or +00:00.")
@@ -127,13 +160,57 @@ def google_invoice_window(details):
     return start, end, currency
 
 
-def normalize_google_cost_table(text, filename, headers, reader, details):
+def billing_header(reader):
+    """Read bounded, recognized Google document metadata before its charge table.
+
+    Do not search past unknown records or use invoice dates/totals as charges.
+    The reader retains original line numbers and the source text is unchanged.
+    """
+    header = next(reader)
+    while not any(cell.strip() for cell in header):
+        header = next(reader)
+    fields = [cell.strip().lower() for cell in header]
+    if {"service description", "cost type"}.issubset(fields):
+        return header, 0, None
+    if not fields or fields[0] not in GOOGLE_DOCUMENT_FIELDS:
+        return header, 0, None
+    count, currencies = 0, set()
+    while not {"service description", "cost type"}.issubset(fields):
+        if (
+            count >= MAX_GOOGLE_DOCUMENT_ROWS
+            or fields[0] not in GOOGLE_DOCUMENT_FIELDS
+            or any(cell.strip() for cell in header[2:])
+        ):
+            raise CCACBuildError(
+                "Unrecognized information before the Google Cost table. Use its English CSV with Service description, Cost type and Unrounded cost. No billing rows were skipped."
+            )
+        if fields[0] in GOOGLE_CURRENCY_FIELDS and len(header) > 1:
+            candidate = header[1].strip().upper()
+            if candidate in CURRENCIES:
+                currencies.add(candidate)
+        count += 1
+        header = next(reader)
+        while not any(cell.strip() for cell in header):
+            header = next(reader)
+        fields = [cell.strip().lower() for cell in header]
+    if len(currencies) > 1:
+        raise CCACBuildError("Google document headers contain conflicting currencies.")
+    return header, count, next(iter(currencies), None)
+
+
+def normalize_google_cost_table(
+    text, filename, headers, reader, details, document_rows=0, document_currency=None
+):
     """Google Cost table is invoice-month data; credits already have their own rows.
 
     Source: https://docs.cloud.google.com/billing/docs/how-to/cost-table
     Never add separate credit columns or treat its Total row as another charge.
     """
     start, end, currency = google_invoice_window(details)
+    if document_currency and document_currency != currency:
+        raise CCACBuildError(
+            "The confirmed currency does not match the Google document header."
+        )
     cost_key = google_cost_column(headers)
     unit = re.search(r"\(([A-Za-z]{3})\)$", cost_key)
     if unit and unit.group(1).upper() != currency:
@@ -245,6 +322,13 @@ def normalize_google_cost_table(text, filename, headers, reader, details):
     warnings = [
         f"Google Cost table uses the confirmed invoice month {details['month']}, not actual daily usage dates. Filters may limit coverage; a full invoice is not verified."
     ]
+    if document_rows:
+        notes.append(
+            f"Read {document_rows} invoice/statement header rows separately from the Cost table; they are document metadata, not charge records."
+        )
+        warnings.append(
+            "Invoice/statement header information is separate from the Cost table charges. Its invoice date and total do not set the reporting month or prove complete coverage."
+        )
     if not cost_key.startswith("unrounded cost"):
         warnings.append(
             "This Google CSV supplies rounded Cost values. Include Unrounded cost for a more precise reconciliation."
@@ -293,7 +377,7 @@ def normalize_csv(
         raise CCACBuildError("Choose valid UTF-8 CSV files totaling 10 MB or less.")
     try:
         reader = csv.reader(io.StringIO(text.lstrip("\ufeff"), newline=""), strict=True)
-        header = next(reader)
+        header, document_rows, document_currency = billing_header(reader)
         headers = [cell.strip().lower() for cell in header]
         if (
             not headers
@@ -303,7 +387,13 @@ def normalize_csv(
             raise CCACBuildError("Every column needs a unique header.")
         if {"service description", "cost type"}.issubset(headers):
             return normalize_google_cost_table(
-                text, filename, headers, reader, google_cost_table
+                text,
+                filename,
+                headers,
+                reader,
+                google_cost_table,
+                document_rows,
+                document_currency,
             )
         focus = "billedcost" in headers or "chargeperiodstart" in headers
         names = (

@@ -1,0 +1,13 @@
+﻿Invoice number,INVENTED-202609
+Invoice date,2026-10-02
+Invoice total,999.00
+Currency,USD
+
+Billing account name,Billing account ID,Project ID,Service description,SKU description,Credit type,Cost type,Usage start date,Usage end date,Unrounded Cost ($),Cost ($)
+Invented account,TEST-ACCOUNT,demo,Compute Engine,Compute hours,,Usage,2026-08-31,2026-09-30,120.123456,120.12
+Invented account,TEST-ACCOUNT,demo,Compute Engine,Compute credit,PROMOTION,Usage,2026-08-31,2026-09-30,-20.123456,-20.12
+Invented account,TEST-ACCOUNT,demo,Cloud Storage,Storage,,Usage,2026-09-01,2026-09-30,10.000001,10.00
+Invented account,TEST-ACCOUNT,demo,,Sales tax,,Tax,,,0.825,0.83
+Invented account,TEST-ACCOUNT,,Invoice,Account adjustment,,Adjustment,,,-2.000001,-2.00
+Invented account,TEST-ACCOUNT,,Invoice,Rounding adjustment,,Rounding Error,,,0.005007,0.01
+,,,,,,Total,,,,108.83
