@@ -25,7 +25,7 @@ def test_google_total_cannot_be_invalidated_by_duplicate_choice():
     assert sum(Decimal(row["cost"]) for row in period["rows"]) == Decimal("109.008")
     assert period["invoiceChecks"][0]["status"] == "matched"
     assert period["invoiceChecks"][0]["actual"] == "109.008"
-    with pytest.raises(CCACBuildError, match="need your review"):
+    with pytest.raises(CCACBuildError, match="needs? your review"):
         prepare_period(files(GOOGLE), CONTEXT)
 
 
