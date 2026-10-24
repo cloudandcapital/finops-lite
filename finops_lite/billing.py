@@ -60,8 +60,11 @@ def day(value):
 def boundary(value, timestamp_basis=None):
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value or ""):
         return datetime.combine(day(value), datetime.min.time(), timezone.utc)
+    # BigQuery CSV serializes UTC explicitly as a suffix and may use microseconds.
+    if isinstance(value, str) and value.endswith(" UTC"):
+        value = value[:-4] + "Z"
     if re.fullmatch(
-        r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?", value or ""
+        r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?", value or ""
     ):
         if timestamp_basis != "UTC":
             raise CCACBuildError(
@@ -69,7 +72,7 @@ def boundary(value, timestamp_basis=None):
             )
         value += "Z"
     if not re.fullmatch(
-        r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|\+00:00)",
+        r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)",
         value or "",
     ):
         raise CCACBuildError("Use an ISO date or UTC timestamp ending in Z or +00:00.")
@@ -81,10 +84,201 @@ def boundary(value, timestamp_basis=None):
 
 
 def stamp(value):
-    return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    precision = "microseconds" if value.microsecond % 1000 else "milliseconds"
+    return value.isoformat(timespec=precision).replace("+00:00", "Z")
 
 
-def normalize_csv(text, filename="billing.csv", *, timestamp_basis=None):
+def google_cost_column(headers):
+    """Recognize the documented English Cost table amounts, never list prices."""
+    found = {}
+    for base in ("unrounded cost", "cost"):
+        matches = [
+            key
+            for key in headers
+            if re.fullmatch(re.escape(base) + r"(?:\s*\([^()]+\))?", key)
+        ]
+        if len(matches) > 1:
+            raise CCACBuildError(
+                "Choose a Google Cost table export with one cost column per precision, in one currency."
+            )
+        if matches:
+            found[base] = matches[0]
+    if found:
+        return found.get("unrounded cost") or found["cost"]
+    raise CCACBuildError(
+        "Include Unrounded cost (recommended) or Cost in the Google Cost table CSV."
+    )
+
+
+def google_invoice_window(details):
+    if not isinstance(details, dict) or details.get("confirmed") is not True:
+        raise CCACBuildError(
+            "Confirm the Google Cost table invoice month and billing currency before review."
+        )
+    month, currency = details.get("month", ""), details.get("currency", "")
+    if not isinstance(month, str) or not re.fullmatch(r"\d{4}-\d{2}", month):
+        raise CCACBuildError("Choose the Google Cost table invoice month as YYYY-MM.")
+    start = day(month + "-01")
+    end = day(f"{start.year + (start.month == 12):04d}-{start.month % 12 + 1:02d}-01")
+    if currency not in CURRENCIES:
+        raise CCACBuildError(
+            "Confirm the Google bill's three-letter billing currency; currency symbols are ambiguous."
+        )
+    return start, end, currency
+
+
+def normalize_google_cost_table(text, filename, headers, reader, details):
+    """Google Cost table is invoice-month data; credits already have their own rows.
+
+    Source: https://docs.cloud.google.com/billing/docs/how-to/cost-table
+    Never add separate credit columns or treat its Total row as another charge.
+    """
+    start, end, currency = google_invoice_window(details)
+    cost_key = google_cost_column(headers)
+    unit = re.search(r"\(([A-Za-z]{3})\)$", cost_key)
+    if unit and unit.group(1).upper() != currency:
+        raise CCACBuildError(
+            "The confirmed currency does not match the Google cost column."
+        )
+    rounded_key = next(
+        (key for key in headers if re.fullmatch(r"cost(?:\s*\([^()]+\))?", key)), None
+    )
+    if rounded_key:
+        rounded_unit = re.search(r"\(([A-Za-z]{3})\)$", rounded_key)
+        if rounded_unit and rounded_unit.group(1).upper() != currency:
+            raise CCACBuildError(
+                "The confirmed currency does not match the Google Cost column."
+            )
+    rows, controls, missing_services, rounded_rows = [], [], 0, 0
+    input_rows = 0
+    for cells in reader:
+        if not any(cell.strip() for cell in cells):
+            continue
+        input_rows += 1
+        if input_rows > MAX_ROWS or len(cells) != len(headers):
+            raise CCACBuildError(
+                "Check Google CSV columns and the 50,000-row input limit."
+            )
+        values = dict(zip(headers, (cell.strip() for cell in cells)))
+        get = lambda key: values.get(key, "")
+        kind = get("cost type").casefold()
+        if kind not in {"usage", "adjustment", "rounding error", "tax", "total"}:
+            raise CCACBuildError(
+                "Use the English Google Cost table CSV with Cost type included and Group by set to No grouping."
+            )
+        row_currency = get("currency") or get("currency code")
+        if row_currency and row_currency.upper() != currency:
+            raise CCACBuildError(
+                "Google records contain a different currency; review one billing currency at a time."
+            )
+        value = get(cost_key)
+        if not value and rounded_key:
+            value = get(rounded_key)
+            if kind != "total":
+                rounded_rows += 1
+        cost = amount(value)
+        if kind == "total":
+            controls.append(cost)
+            continue
+        service = get("service description")
+        if not service:
+            missing_services += 1
+            service = f"{get('cost type')} · service not supplied"
+        if len(service) > 200 or len(get("billing account id")) > 300:
+            raise CCACBuildError(
+                "Keep service names to 200 characters and billing account IDs to 300."
+            )
+        row = dict(
+            start=stamp(boundary(str(start))),
+            end=stamp(boundary(str(end))),
+            service=service,
+            provider="Google Cloud",
+            currency=currency,
+            cost=text_decimal(cost),
+            recordId="",
+            accountId=get("billing account id"),
+            file=filename,
+            line=reader.line_num,
+        )
+        # Full original dimensions distinguish projects, SKUs and credit types.
+        row["fingerprint"] = json.dumps(
+            [
+                row["start"],
+                row["end"],
+                service,
+                currency,
+                row["cost"],
+                sorted(values.items()),
+            ],
+            ensure_ascii=False,
+        )
+        rows.append(row)
+    if not rows:
+        raise CCACBuildError(
+            "The Google CSV has no charge records; a Total row alone cannot supply a service review."
+        )
+    if len(controls) > 1:
+        raise CCACBuildError(
+            "This Google CSV has multiple Total rows. Download one flat, ungrouped Cost table, in one currency."
+        )
+    if controls:
+        with localcontext() as context:
+            context.prec = 50
+            net = sum((Decimal(row["cost"]) for row in rows), Decimal(0))
+            # Google documents the invoice total as the sum of unrounded rows,
+            # rounded to two places. Raw amounts remain unchanged in the report.
+            if net.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) != controls[
+                0
+            ].quantize(Decimal("0.01"), rounding=ROUND_HALF_UP):
+                raise CCACBuildError(
+                    "Google's Total row does not match the charge rows. Include Unrounded cost and download with No grouping and filters reset."
+                )
+    notes = [
+        f"Google Cost table: {cost_key} supplies signed billed amounts; credits are separate rows and are not added twice.",
+        f"The visitor confirmed invoice month {details['month']} and billing currency {currency}; these are invoice-month records, not daily usage observations.",
+        "Google Total rows are reconciliation controls and are excluded from charge totals.",
+    ]
+    if rounded_rows:
+        notes.append(
+            f"{rounded_rows} rows lacked Unrounded cost and used the supplied Cost value; no missing amount was replaced with zero."
+        )
+    warnings = [
+        f"Google Cost table uses the confirmed invoice month {details['month']}, not actual daily usage dates. Filters may limit coverage; a full invoice is not verified."
+    ]
+    if not cost_key.startswith("unrounded cost"):
+        warnings.append(
+            "This Google CSV supplies rounded Cost values. Include Unrounded cost for a more precise reconciliation."
+        )
+    elif rounded_rows:
+        warnings.append(
+            f"{rounded_rows} Google rows have no Unrounded cost value; their supplied rounded Cost values were used instead. No missing amount was replaced with zero."
+        )
+    if controls:
+        warnings.append(
+            "The Google Total row matches supplied charge rows at two-decimal invoice precision before duplicate handling; the Total row is not counted as a charge."
+        )
+    else:
+        warnings.append(
+            "No Google Total row was supplied; compare this review with the source invoice or statement."
+        )
+    if missing_services:
+        warnings.append(
+            f"{missing_services} Google rows have no service description; their cost-type labels identify unassigned charges, not known services."
+        )
+    return dict(
+        name=filename,
+        text=text,
+        format="Google Cloud Cost table CSV",
+        rows=rows,
+        inputRowCount=input_rows,
+        warnings=warnings,
+        mappingNotes=notes,
+    )
+
+
+def normalize_csv(
+    text, filename="billing.csv", *, timestamp_basis=None, google_cost_table=None
+):
     # Transport may decompress Gzip first. The content and its source digest
     # remain the original expanded CSV text, never a rewritten table.
     if not filename.lower().endswith((".csv", ".csv.gz")):
@@ -107,6 +301,10 @@ def normalize_csv(text, filename="billing.csv", *, timestamp_basis=None):
             or len(set(headers)) != len(headers)
         ):
             raise CCACBuildError("Every column needs a unique header.")
+        if {"service description", "cost type"}.issubset(headers):
+            return normalize_google_cost_table(
+                text, filename, headers, reader, google_cost_table
+            )
         focus = "billedcost" in headers or "chargeperiodstart" in headers
         names = (
             [
@@ -126,7 +324,7 @@ def normalize_csv(text, filename="billing.csv", *, timestamp_basis=None):
                 "We could not find the supported billing columns. Use the simple template or a FOCUS BilledCost CSV."
             )
         used = set(names + ["recordid", "billingaccountid", "chargecategory"])
-        rows = []
+        rows, missing_services = [], 0
         for cells in reader:
             if not any(cell.strip() for cell in cells):
                 continue
@@ -137,6 +335,10 @@ def normalize_csv(text, filename="billing.csv", *, timestamp_basis=None):
             values = dict(zip(headers, (cell.strip() for cell in cells)))
             get = lambda name: values.get(name, "")
             service, provider = get(names[1]), get(names[5]) or "Not specified"
+            missing_service = focus and not service
+            if missing_service:
+                missing_services += 1
+                service = f"{get('chargecategory') or 'Charge'} · service not supplied"
             if not service or len(service) > 200 or len(provider) > 200:
                 raise CCACBuildError(
                     "Supply a Service label and keep service/provider names to 200 characters."
@@ -191,6 +393,8 @@ def normalize_csv(text, filename="billing.csv", *, timestamp_basis=None):
             extras = sorted(
                 (key, value) for key, value in values.items() if key not in used
             )
+            if missing_service:
+                extras.append(("__missing_source_service__", "true"))
             row["fingerprint"] = json.dumps(
                 [
                     row["start"],
@@ -219,6 +423,13 @@ def normalize_csv(text, filename="billing.csv", *, timestamp_basis=None):
         text=text,
         format="FOCUS BilledCost" if focus else "Simple billing CSV",
         rows=rows,
+        warnings=(
+            [
+                f"{missing_services} FOCUS rows have no ServiceName; they are grouped by supplied ChargeCategory with a service-not-supplied label. Amounts are unchanged."
+            ]
+            if missing_services
+            else []
+        ),
     )
 
 
@@ -236,11 +447,15 @@ def prepare_period(files, options=None):
             item["text"],
             item.get("name", "billing.csv"),
             timestamp_basis=options.get("timestampBasis"),
+            google_cost_table=options.get("googleCostTable"),
         )
         for item in files
     ]
     source_rows = [row for item in parsed for row in item["rows"]]
-    if len(source_rows) > MAX_ROWS:
+    input_row_count = sum(
+        item.get("inputRowCount", len(item["rows"])) for item in parsed
+    )
+    if input_row_count > MAX_ROWS:
         raise CCACBuildError("Use between 1 and 50,000 billing records per period.")
     currencies = sorted({row["currency"] for row in source_rows})
     if len(currencies) != 1:
@@ -291,7 +506,18 @@ def prepare_period(files, options=None):
         raise CCACBuildError(
             "This bill has more than 1,000 service groups. Export a smaller period or fewer accounts."
         )
-    warnings = []
+    warnings = [warning for item in parsed for warning in item.get("warnings", [])]
+    google_files = [
+        item for item in parsed if item["format"] == "Google Cloud Cost table CSV"
+    ]
+    if google_files and len(google_files) != len(parsed):
+        raise CCACBuildError(
+            "Review Google Cost table files separately from FOCUS or simple CSVs; do not combine different export representations of the same bill."
+        )
+    if google_files and (options.get("start") or options.get("end")):
+        raise CCACBuildError(
+            "For Google Cost table files, use the confirmed invoice month instead of overriding period dates."
+        )
     if options.get("timestampBasis") == "UTC":
         warnings.append(
             "You confirmed that timestamps without a timezone are UTC. Original CSV text is preserved."
@@ -317,16 +543,21 @@ def prepare_period(files, options=None):
         end=str(end),
         days=days,
         dateBasis=(
-            "Selected dates (inclusive in the form; end exclusive in downloads)"
-            if options.get("start") or options.get("end")
-            else "Coverage inferred from charge dates; a complete invoice period is not confirmed"
+            "Invoice month confirmed by the visitor; actual usage dates may differ"
+            if google_files
+            else (
+                "Selected dates (inclusive in the form; end exclusive in downloads)"
+                if options.get("start") or options.get("end")
+                else "Coverage inferred from charge dates; a complete invoice period is not confirmed"
+            )
         ),
         timestampBasis=options.get("timestampBasis"),
         sources=[
             dict(name=item["name"], format=item["format"], rows=len(item["rows"]))
             for item in parsed
         ],
-        sourceRowCount=len(source_rows),
+        sourceRowCount=input_row_count,
+        sourceMappingNotes=[item.get("mappingNotes", []) for item in parsed],
         repeatedIds=repeated,
         identicalRows=identical,
         duplicatePolicy=policy,
@@ -391,6 +622,7 @@ def _build(current_files, previous_files, options, run_id, generated_at, mode):
     by_id = {}
     period = dict(start=current["start"], end=current["end"], timezone="UTC")
     for label, files in [("current", current_files), ("previous", previous_files)]:
+        period_data = current if label == "current" else previous
         for index, item in enumerate(files):
             identifier = f"source.finops-lite.{label}.{index}"
             digest = hashlib.sha256(item["text"].encode("utf-8")).hexdigest()
@@ -398,7 +630,12 @@ def _build(current_files, previous_files, options, run_id, generated_at, mode):
                 dict(
                     id=identifier,
                     source_type="billing_csv",
-                    source_version=PROFILE,
+                    source_version=(
+                        "google_cost_table/1.0"
+                        if period_data["sources"][index]["format"]
+                        == "Google Cloud Cost table CSV"
+                        else PROFILE
+                    ),
                     adapter_version=__version__,
                     content_sha256=digest,
                     access=(
@@ -416,6 +653,7 @@ def _build(current_files, previous_files, options, run_id, generated_at, mode):
                         "Supported signed billed-cost columns are preserved; source coverage is not assumed complete.",
                         "Source content_sha256 identifies the original expanded UTF-8 CSV text, including any BOM and line endings.",
                     ]
+                    + period_data["sourceMappingNotes"][index]
                     + (
                         ["The visitor confirmed UTC for timestamps without a timezone."]
                         if options.get(label, {}).get("timestampBasis") == "UTC"
