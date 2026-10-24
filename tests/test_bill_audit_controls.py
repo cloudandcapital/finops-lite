@@ -264,3 +264,16 @@ def test_daily_evidence_keeps_in_window_usage_and_retains_correction_in_total():
         for warning in layout["current"]["warnings"]
     )
     assert validate_document(result) == []
+
+
+def test_partial_day_overlapping_billing_start_is_not_omitted_as_a_correction():
+    header = "ChargePeriodStart,ChargePeriodEnd,ServiceName,BilledCost,BillingCurrency,BillingPeriodStart,BillingPeriodEnd\n"
+    text = (
+        header
+        + "2026-08-31T23:00:00Z,2026-09-01T01:00:00Z,EC2,2,USD,2026-09-01,2026-10-01\n2026-09-01,2026-09-02,EC2,100,USD,2026-09-01,2026-10-01"
+    )
+    result = build_billing_result(files(text))
+    layout = result["extensions"]["finops_lite"]["billing"]
+    assert not layout["daily_observation_metric_ids"]
+    assert len(layout["current"]["rows"]) == 2
+    assert not any("wholly outside" in note for note in layout["current"]["warnings"])
