@@ -64,8 +64,9 @@ The month is a reporting window, not a claim about daily usage or the export's
 completeness. No daily anomaly observations are created from these rows. A
 single Total row is checked at Google's documented two-decimal invoice precision
 and is excluded from charges; a mismatch fails the review. Missing amounts are
-never replaced with zero. Source text, selected context and any rounded fallback
-are recorded in evidence. Review this format separately from other formats of a
+never replaced with zero. Source text stays unchanged; evidence records its hash,
+normalized charges, selected context and any rounded fallback, rather than every
+original CSV column. Review this format separately from other formats of a
 bill. Tests use invented records matching documented columns, not captured
 current customer downloads; broader native-provider acceptance remains separate.
 
