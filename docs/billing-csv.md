@@ -1,11 +1,11 @@
-# Supplied billing CSV input (draft)
+# Supplied billing CSV input
 
 `finops_lite.billing.build_billing_result` is a credential-free input to the
 existing FinOps Lite CCAC producer. It owns normalization, signed billed-cost
 totals, service/provider/date metrics, comparisons, evidence and finding
 references. It uses the existing metric builder with lossless Decimal output.
 The AWS collector and its pinned illustrative artifacts keep their existing
-behavior. This draft is part of Cloud Cost Guard's upload integration (#18).
+behavior. This input powers Cloud Cost Guard's browser-local upload pipeline.
 
 ```python
 from pathlib import Path
@@ -36,6 +36,38 @@ never rewritten. Non-UTC offsets remain unsupported. No FX, amortization, omitte
 credit or account coverage is inferred. Invalid rows stop the entire selection.
 Each period supports 20 parts, 10 MB, 50,000 rows, 366 days and 1,000 service
 groups. Signed totals above one trillion in charges or adjustments are rejected.
+
+Explicit BigQuery timestamps ending in ` UTC` and up to six fractional-second
+digits are accepted without dropping microseconds. FOCUS rows with an empty
+ServiceName keep their amounts and receive a supplied ChargeCategory plus
+service-not-supplied label, with a coverage warning. A blank name is not evidence
+of a particular service. Simple CSV still requires its Service value.
+
+## Google Cloud Cost table
+
+The English Cost table CSV is a separate invoice-month input. Follow Google's
+[Cost table instructions](https://docs.cloud.google.com/billing/docs/how-to/cost-table):
+reset filters, choose the invoice month, use No grouping, and include Service
+description, Cost type and Unrounded cost. Cost is a supported rounded fallback;
+List cost is never substituted. Credits already appear as separate signed rows,
+so no other credit column is added to these amounts.
+
+Confirm the invoice month and three-letter billing currency explicitly:
+
+```python
+options = {"current": {"googleCostTable": {
+    "month": "2026-09", "currency": "USD", "confirmed": True
+}}}
+```
+
+The month is a reporting window, not a claim about daily usage or the export's
+completeness. No daily anomaly observations are created from these rows. A
+single Total row is checked at Google's documented two-decimal invoice precision
+and is excluded from charges; a mismatch fails the review. Missing amounts are
+never replaced with zero. Source text, selected context and any rounded fallback
+are recorded in evidence. Review this format separately from other formats of a
+bill. Tests use invented records matching documented columns, not captured
+current customer downloads; broader native-provider acceptance remains separate.
 
 Repeated stable IDs count once only if all billing content and extra dimensions
 match. Conflicts fail. Identical anonymous rows require explicit
