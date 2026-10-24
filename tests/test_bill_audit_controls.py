@@ -47,6 +47,14 @@ def test_google_total_cannot_be_invalidated_by_duplicate_choice():
         "Total (USD)",
         "TOTAL (USD):",
         "Statement total",
+        "Service total",
+        "Total USD",
+        "Monthly total",
+        "Total for this invoice",
+        "Total excluding tax",
+        "Total incl. tax",
+        "Monthly service total (EUR)",
+        "Total including VAT",
     ],
 )
 def test_simple_total_lines_stop_instead_of_counting_twice(label):
@@ -190,6 +198,12 @@ def test_many_explicit_comma_groups_keep_bounded_warning_context():
         "Credit-card transaction fee",
         "Total Defense",
         "Totaljobs",
+        "Total Recall API",
+        "Grand Central Storage",
+        "Stripe credit card fee",
+        "Credit card fee (Stripe)",
+        "Stripe credit-card transaction fees",
+        "Total API",
     ],
 )
 def test_real_service_labels_are_not_reclassified_as_credits_or_totals(label):

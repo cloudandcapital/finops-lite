@@ -78,26 +78,42 @@ SYMBOL_CURRENCIES = {
 
 
 def summary_service_label(value):
-    label = value.strip().rstrip(":").strip()
-    label = re.sub(r"\s*\((?:[A-Za-z]{3}|[$€£¥￥₹₩])\)\s*$", "", label)
-    return bool(
-        re.fullmatch(
-            r"(?:(?:(?:grand|net|invoice|statement|final)\s+|sub\s*)?totals?(?:\s+(?:costs?|charges?|amount(?:\s+due)?|due|payable))?|(?:amount|balance)\s+due)",
-            label.strip().rstrip(":"),
-            re.I,
-        )
+    # Recognize billing-label grammar, not every business name containing Total.
+    tokens = re.sub(r"[().:_-]", " ", value).split()
+    if tokens and (tokens[-1].upper() in CURRENCIES or tokens[-1] in SYMBOL_CURRENCIES):
+        tokens.pop()
+    tokens = [token.casefold() for token in tokens]
+    if tokens in (["amount", "due"], ["balance", "due"]):
+        return True
+    totals = [
+        i
+        for i, token in enumerate(tokens)
+        if token in {"total", "totals", "subtotal", "subtotals"}
+    ]
+    if len(totals) != 1:
+        return False
+    prefix = set(
+        "grand net invoice statement final service monthly annual yearly daily period account billing bill sub".split()
+    )
+    suffix = set(
+        "cost costs charge charges amount due payable for this the invoice statement bill month period service incl including excl excluding with without tax taxes vat".split()
+    )
+    index = totals[0]
+    return all(token in prefix for token in tokens[:index]) and all(
+        token in suffix for token in tokens[index + 1 :]
     )
 
 
 def positive_credit_label(value):
-    # A card processing fee is a charge, not a credit. Do not negate it.
-    if re.fullmatch(
-        r"credit[ -]card\s+(?:(?:processing|transaction|merchant)\s+)?fees?",
-        value.strip(),
-        re.I,
-    ):
-        return False
-    return bool(re.search(r"\b(?:credits?|refunds?|discounts?)\b", value, re.I))
+    # The fee phrase may have a vendor prefix/suffix. A separate refund or
+    # discount still needs its signed amount checked.
+    remainder = re.sub(
+        r"\bcredit[ -]card\s+(?:(?:processing|transaction|merchant)\s+)?fees?\b",
+        "",
+        value,
+        flags=re.I,
+    )
+    return bool(re.search(r"\b(?:credits?|refunds?|discounts?)\b", remainder, re.I))
 
 
 def invoice_month_value(value):
@@ -470,7 +486,7 @@ def normalize_google_cost_table(
         )
     if missing_services:
         warnings.append(
-            f"{missing_services} Google {'row has' if missing_services == 1 else 'rows have'} no service description; their cost-type labels identify unassigned charges, not known services."
+            f"{missing_services} Google {'row has no service description; its cost-type label identifies an unassigned charge, not a known service' if missing_services == 1 else 'rows have no service description; their cost-type labels identify unassigned charges, not known services'}."
         )
     return dict(
         name=filename,
@@ -718,7 +734,7 @@ def normalize_csv(
             )
     if missing_services:
         warnings.append(
-            f"{missing_services} FOCUS {'row has' if missing_services == 1 else 'rows have'} no ServiceName; they are grouped by supplied ChargeCategory with a service-not-supplied label. Amounts are unchanged."
+            f"{missing_services} FOCUS {'row has no ServiceName; it is grouped' if missing_services == 1 else 'rows have no ServiceName; they are grouped'} by supplied ChargeCategory with a service-not-supplied label. Amounts are unchanged."
         )
     return dict(
         name=filename,
@@ -924,6 +940,38 @@ def prepare_period(files, options=None):
         warnings.append(
             "Provider was not supplied for some records. They are grouped under “Not specified”."
         )
+    potential_summary_rows = []
+    potential_summary_count = 0
+    for item in parsed:
+        if item["format"] != "Simple billing CSV":
+            continue
+        records = [row for row in item["rows"] if id(row) in kept]
+        # A flat invoice-style group can contain a summary under any name.
+        # Equal amounts are only a warning: legitimate charges can coincide.
+        if (
+            len(records) < 3
+            or len({(row["start"], row["end"]) for row in records}) != 1
+        ):
+            continue
+        with localcontext() as context:
+            context.prec = 50
+            net = sum((Decimal(row["cost"]) for row in records), Decimal(0))
+            for row in records:
+                value = Decimal(row["cost"])
+                if value and value * 2 == net:
+                    potential_summary_count += 1
+                    if len(potential_summary_rows) < 5:
+                        potential_summary_rows.append(
+                            dict(
+                                source=item["name"],
+                                line=row["line"],
+                                service=row["service"],
+                            )
+                        )
+    if potential_summary_count:
+        warnings.append(
+            f"{potential_summary_count} possible total {'row matches' if potential_summary_count == 1 else 'rows match'} the combined amount of the other counted rows in the same simple CSV. All rows remain included. A real charge can also match; check the source and remove a row only if it is a summary."
+        )
     return dict(
         currency=currencies[0],
         rows=rows,
@@ -954,6 +1002,8 @@ def prepare_period(files, options=None):
         identicalRows=identical,
         duplicatePolicy=policy,
         invoiceChecks=invoice_checks,
+        potentialSummaryRows=potential_summary_rows,
+        potentialSummaryRowCount=potential_summary_count,
         warnings=warnings,
         spansMultipleDays=any(
             boundary(row["end"])

@@ -4,6 +4,14 @@ Audit recheck: template summary labels include Invoice total, Total charges,
 Totals, Total due and currency-qualified totals such as Total (USD). They stop
 instead of becoming a charge. Real service names are not rejected merely for
 containing “total”; a credit card processing fee remains a positive charge.
+Service/monthly totals and tax/currency-qualified summary labels are also blocked.
+Vendor-prefixed card fees remain charges; a separately named refund or credit
+still requires its signed amount. In a flat, same-window simple CSV with at least
+three rows, a row equal to the combined other counted rows receives a possible
+summary warning. Every row stays included: equal values do not prove a duplicate
+or summary. Review details name the original file/line and are capped at five;
+the full candidate count and original records are preserved.
+
 Google invoice-month headers support YYYY-MM and English Month YYYY. An unknown
 header format requires explicit visitor confirmation and a visible warning;
 a recognized conflicting month still stops. Explicit Tax rows retain their
