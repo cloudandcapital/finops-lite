@@ -151,3 +151,8 @@ Thumbs.db
 
 # local extra repo
 finops-watchdog/
+
+# Local environment files may contain credentials.
+.env
+.env.*
+!.env.example
