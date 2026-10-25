@@ -172,3 +172,8 @@ MIT © 2026 Diana Molski, Cloud & Capital
 ### Supplied billing CSVs (draft integration)
 
 The credential-free [billing CSV adapter](docs/billing-csv.md) produces canonical signed billed-cost metrics, exact comparisons and eligible observed daily evidence for Guard. This is an input to FinOps Lite, not a separate dashboard calculator. The supported profile and partial-coverage rules are documented there.
+
+
+### Development Python versions
+
+The tool and its tests support Python 3.10 and newer. Run dependency auditing with Python 3.11 or newer; the audit tooling is included in the development extra on those versions.
